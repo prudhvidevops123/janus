@@ -57,6 +57,9 @@ func (r *HTTPRunner) Do(url string, params HTTPParams) (HTTPResult, error) {
 }
 
 func (r *HTTPRunner) DoWithPolicy(url string, params HTTPParams, policy RedirectPolicy) (HTTPResult, error) {
+	if err := validateHTTPRequestTarget(url, policy.AllowHosts); err != nil {
+		return HTTPResult{}, err
+	}
 	if params.Method == "" {
 		params.Method = http.MethodGet
 	}
@@ -149,4 +152,18 @@ func hostFromNormalizedURL(resource string) string {
 		return trimmed
 	}
 	return trimmed[:idx]
+}
+
+func validateHTTPRequestTarget(rawURL string, allowHosts []string) error {
+	normalized, err := normalize.NormalizeRedirectURL(rawURL)
+	if err != nil {
+		return ErrRedirectInvalidTarget
+	}
+	if len(allowHosts) == 0 {
+		return nil
+	}
+	if !hostAllowlisted(allowHosts, hostFromNormalizedURL(normalized)) {
+		return ErrRedirectDisallowedHost
+	}
+	return nil
 }

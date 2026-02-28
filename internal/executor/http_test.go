@@ -38,7 +38,7 @@ func TestHTTPRunnerRedirectAllowlistAndFinalResource(t *testing.T) {
 	result, err := runner.DoWithPolicy(redirect.URL, HTTPParams{Method: http.MethodGet}, RedirectPolicy{
 		Enabled:    true,
 		HopLimit:   2,
-		AllowHosts: []string{final.Listener.Addr().String()},
+		AllowHosts: []string{redirect.Listener.Addr().String(), final.Listener.Addr().String()},
 	})
 	if err != nil {
 		t.Fatalf("do with policy: %v", err)
@@ -69,9 +69,19 @@ func TestHTTPRunnerRedirectHopLimit(t *testing.T) {
 	_, err := runner.DoWithPolicy(first.URL, HTTPParams{Method: http.MethodGet}, RedirectPolicy{
 		Enabled:    true,
 		HopLimit:   1,
-		AllowHosts: []string{second.Listener.Addr().String(), final.Listener.Addr().String()},
+		AllowHosts: []string{first.Listener.Addr().String(), second.Listener.Addr().String(), final.Listener.Addr().String()},
 	})
 	if !errors.Is(err, ErrRedirectHopLimit) {
 		t.Fatalf("expected ErrRedirectHopLimit, got %v", err)
+	}
+}
+
+func TestHTTPRunnerRejectsDisallowedInitialHost(t *testing.T) {
+	runner := NewHTTPRunner(1024)
+	_, err := runner.DoWithPolicy("https://evil.example/path", HTTPParams{Method: http.MethodGet}, RedirectPolicy{
+		AllowHosts: []string{"example.com"},
+	})
+	if !errors.Is(err, ErrRedirectDisallowedHost) {
+		t.Fatalf("expected ErrRedirectDisallowedHost, got %v", err)
 	}
 }
