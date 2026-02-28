@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -58,74 +59,71 @@ func (r *HTTPRunner) Do(url string, params HTTPParams) (HTTPResult, error) {
 }
 
 func (r *HTTPRunner) DoWithPolicy(url string, params HTTPParams, policy RedirectPolicy) (HTTPResult, error) {
-	safeURL, err := validateHTTPRequestTarget(url, policy.AllowHosts)
+	safeURL, normalizedTarget, err := resolveHTTPRequestTarget(url, policy.AllowHosts)
 	if err != nil {
 		return HTTPResult{}, err
 	}
 	if params.Method == "" {
 		params.Method = http.MethodGet
 	}
-	reader := strings.NewReader(params.Body)
-	req, err := http.NewRequest(params.Method, safeURL, reader)
-	if err != nil {
-		return HTTPResult{}, err
-	}
-	for key, value := range params.Header {
-		req.Header.Set(key, value)
-	}
 	client := *r.client
+	transport := client.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	timeout := client.Timeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
 	redirectHops := 0
-	client.CheckRedirect = func(next *http.Request, via []*http.Request) error {
-		redirectHops = len(via)
-		if !policy.Enabled {
-			return ErrRedirectDenied
-		}
-		limit := policy.HopLimit
-		if limit <= 0 {
-			limit = 3
-		}
-		if len(via) > limit {
-			return ErrRedirectHopLimit
-		}
-		normalized, err := normalize.NormalizeRedirectURL(next.URL.String())
-		if err != nil {
-			return ErrRedirectInvalidTarget
-		}
-		if !hostAllowlisted(policy.AllowHosts, hostFromNormalizedURL(normalized)) {
-			return ErrRedirectDisallowedHost
-		}
-		return nil
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return HTTPResult{}, err
-	}
-	defer resp.Body.Close()
+	currentURL := safeURL
+	currentNormalized := normalizedTarget
+	currentMethod := params.Method
 
-	limited := io.LimitReader(resp.Body, int64(r.maxBytes+1))
-	body, err := io.ReadAll(limited)
-	if err != nil {
-		return HTTPResult{}, err
+	for {
+		req, err := newHTTPRequest(currentMethod, currentURL, params)
+		if err != nil {
+			return HTTPResult{}, err
+		}
+		ctx, cancel := context.WithTimeout(req.Context(), timeout)
+		req = req.WithContext(ctx)
+		resp, err := transport.RoundTrip(req)
+		cancel()
+		if err != nil {
+			return HTTPResult{}, err
+		}
+		if !isRedirectResponse(resp.StatusCode) {
+			defer resp.Body.Close()
+			limited := io.LimitReader(resp.Body, int64(r.maxBytes+1))
+			body, err := io.ReadAll(limited)
+			if err != nil {
+				return HTTPResult{}, err
+			}
+			truncated := len(body) > r.maxBytes
+			if truncated {
+				body = body[:r.maxBytes]
+			}
+			return HTTPResult{
+				StatusCode:    resp.StatusCode,
+				Body:          string(body),
+				Truncated:     truncated,
+				FinalResource: currentNormalized,
+				RedirectHops:  redirectHops,
+			}, nil
+		}
+		if err := resp.Body.Close(); err != nil {
+			return HTTPResult{}, err
+		}
+		location := strings.TrimSpace(resp.Header.Get("Location"))
+		if location == "" {
+			return HTTPResult{}, ErrRedirectInvalidTarget
+		}
+		currentURL, currentNormalized, currentMethod, err = nextRedirectTarget(currentURL, currentMethod, location, policy, redirectHops)
+		if err != nil {
+			return HTTPResult{}, err
+		}
+		redirectHops++
 	}
-	truncated := len(body) > r.maxBytes
-	if truncated {
-		body = body[:r.maxBytes]
-	}
-	finalURL := req.URL.String()
-	if resp.Request != nil && resp.Request.URL != nil {
-		finalURL = resp.Request.URL.String()
-	}
-	finalResource, err := normalize.NormalizeRedirectURL(finalURL)
-	if err != nil {
-		return HTTPResult{}, ErrRedirectInvalidTarget
-	}
-	return HTTPResult{
-		StatusCode:    resp.StatusCode,
-		Body:          string(body),
-		Truncated:     truncated,
-		FinalResource: finalResource,
-		RedirectHops:  redirectHops,
-	}, nil
 }
 
 func (r *HTTPRunner) Client() *http.Client {
@@ -156,20 +154,95 @@ func hostFromNormalizedURL(resource string) string {
 	return trimmed[:idx]
 }
 
-func validateHTTPRequestTarget(rawURL string, allowHosts []string) (string, error) {
+func resolveHTTPRequestTarget(rawURL string, allowHosts []string) (*neturl.URL, string, error) {
 	parsed, err := neturl.Parse(strings.TrimSpace(rawURL))
 	if err != nil {
-		return "", ErrRedirectInvalidTarget
+		return nil, "", ErrRedirectInvalidTarget
 	}
 	normalized, err := normalize.NormalizeRedirectURL(rawURL)
 	if err != nil {
-		return "", ErrRedirectInvalidTarget
+		return nil, "", ErrRedirectInvalidTarget
 	}
-	if len(allowHosts) == 0 {
-		return parsed.Scheme + "://" + strings.TrimPrefix(normalized, "url://"), nil
+	host := hostFromNormalizedURL(normalized)
+	if len(allowHosts) > 0 && !hostAllowlisted(allowHosts, host) {
+		return nil, "", ErrRedirectDisallowedHost
 	}
-	if !hostAllowlisted(allowHosts, hostFromNormalizedURL(normalized)) {
-		return "", ErrRedirectDisallowedHost
+	path := pathFromNormalizedURL(normalized)
+	scheme := strings.ToLower(parsed.Scheme)
+	return &neturl.URL{
+		Scheme: scheme,
+		Host:   host,
+		Path:   path,
+	}, normalized, nil
+}
+
+func pathFromNormalizedURL(resource string) string {
+	trimmed := strings.TrimPrefix(resource, "url://")
+	idx := strings.Index(trimmed, "/")
+	if idx == -1 {
+		return "/"
 	}
-	return parsed.Scheme + "://" + strings.TrimPrefix(normalized, "url://"), nil
+	return trimmed[idx:]
+}
+
+func newHTTPRequest(method string, target *neturl.URL, params HTTPParams) (*http.Request, error) {
+	req, err := http.NewRequest(method, "", strings.NewReader(params.Body))
+	if err != nil {
+		return nil, err
+	}
+	req.URL = cloneURL(target)
+	req.Host = target.Host
+	for key, value := range params.Header {
+		req.Header.Set(key, value)
+	}
+	return req, nil
+}
+
+func nextRedirectTarget(current *neturl.URL, method, location string, policy RedirectPolicy, redirectHops int) (*neturl.URL, string, string, error) {
+	if !policy.Enabled {
+		return nil, "", "", ErrRedirectDenied
+	}
+	limit := policy.HopLimit
+	if limit <= 0 {
+		limit = 3
+	}
+	if redirectHops+1 > limit {
+		return nil, "", "", ErrRedirectHopLimit
+	}
+	parsedLocation, err := neturl.Parse(location)
+	if err != nil {
+		return nil, "", "", ErrRedirectInvalidTarget
+	}
+	resolved := current.ResolveReference(parsedLocation)
+	safeURL, normalized, err := resolveHTTPRequestTarget(resolved.String(), policy.AllowHosts)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return safeURL, normalized, redirectMethod(method), nil
+}
+
+func redirectMethod(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead:
+		return method
+	default:
+		return http.MethodGet
+	}
+}
+
+func isRedirectResponse(statusCode int) bool {
+	switch statusCode {
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		return true
+	default:
+		return false
+	}
+}
+
+func cloneURL(value *neturl.URL) *neturl.URL {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
