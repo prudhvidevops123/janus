@@ -131,10 +131,10 @@ jobs:
       - name: Doctor smoke (ready)
         shell: bash
         env:
-          JANUS_MCP_ENABLED: "true"
+          NOMOS_MCP_ENABLED: "true"
         run: |
           set -euo pipefail
-          go run ./cmd/janus doctor -c ./config.example.json -p ./policies/m1_5_minimal.json --format json > doctor.json
+          go run ./cmd/nomos doctor -c ./config.example.json -p ./policies/m1_5_minimal.json --format json > doctor.json
           cat doctor.json
           grep -q '"overall_status":"READY"' doctor.json
 
@@ -176,7 +176,7 @@ jobs:
         with:
           context: .
           push: false
-          tags: janus:ci
+          tags: nomos:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -213,15 +213,15 @@ jobs:
             GOOS_TARGET="$1"
             GOARCH_TARGET="$2"
             EXT="${3:-}"
-            OUT="dist/janus-${VERSION}-${GOOS_TARGET}-${GOARCH_TARGET}${EXT}"
+            OUT="dist/nomos-${VERSION}-${GOOS_TARGET}-${GOARCH_TARGET}${EXT}"
             GOOS="${GOOS_TARGET}" GOARCH="${GOARCH_TARGET}" \
-              go build -ldflags "-X github.com/safe-agentic-world/janus/internal/version.Version=${VERSION} -X github.com/safe-agentic-world/janus/internal/version.Commit=${COMMIT} -X github.com/safe-agentic-world/janus/internal/version.BuildDate=${BUILD_DATE}" \
-              -o "${OUT}" ./cmd/janus
+              go build -ldflags "-X github.com/safe-agentic-world/nomos/internal/version.Version=${VERSION} -X github.com/safe-agentic-world/nomos/internal/version.Commit=${COMMIT} -X github.com/safe-agentic-world/nomos/internal/version.BuildDate=${BUILD_DATE}" \
+              -o "${OUT}" ./cmd/nomos
             sha256sum "${OUT}" > "${OUT}.sha256"
           done
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: janus-release-binaries
+          name: nomos-release-binaries
           path: dist/*
