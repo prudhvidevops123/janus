@@ -1,6 +1,6 @@
 module github.com/safe-agentic-world/janus
 
-go 1.22
+go 1.24
 
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
