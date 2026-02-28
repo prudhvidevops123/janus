@@ -1,20 +1,26 @@
 name: Auto Tag Release
 
 on:
-  push:
+  pull_request:
     branches:
       - main
+  workflow_run:
+    workflows:
+      - Enterprise CI
+    types:
+      - completed
 
 concurrency:
-  group: auto-tag-${{ github.ref }}
+  group: auto-tag-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.event.workflow_run.head_sha || github.ref }}
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  tag-release:
-    name: Tag Semantic Release
+  validate-bump:
+    name: Validate Semantic Release
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -22,32 +28,32 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Configure Git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-      - name: Create tag from commit prefix
+      - name: Validate semantic version bump
         shell: bash
         run: |
           set -euo pipefail
 
-          if git tag --points-at HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -q .; then
-            echo "HEAD already has a semantic version tag; skipping."
-            exit 0
-          fi
-
           subject="$(git log -1 --pretty=%s)"
           body="$(git log -1 --pretty=%B)"
           bump=""
+          header="${subject%%:*}"
+          type="${header%%(*}"
+          type="${type%!}"
 
-          if [[ "${subject}" =~ ^[a-zA-Z]+(\([^)]+\))?!: ]] || grep -q 'BREAKING CHANGE:' <<<"${body}"; then
+          if grep -q 'BREAKING CHANGE:' <<<"${body}" || [[ "${header}" == *"!" ]]; then
             bump="major"
-          elif [[ "${subject}" =~ ^feat(\([^)]+\))?: ]]; then
-            bump="minor"
-          elif [[ "${subject}" =~ ^fix(\([^)]+\))?: ]]; then
-            bump="patch"
           else
+            case "${type}" in
+              feat)
+                bump="minor"
+                ;;
+              fix)
+                bump="patch"
+                ;;
+            esac
+          fi
+
+          if [[ -z "${bump}" ]]; then
             echo "Commit does not request a semantic release tag; skipping."
             echo "Latest commit: ${subject}"
             exit 0
@@ -77,6 +83,89 @@ jobs:
           esac
 
           next_tag="v${major}.${minor}.${patch}"
-          echo "Creating ${next_tag} from commit: ${subject}"
+          echo "Computed release tag ${next_tag} from commit: ${subject}"
+          echo "Pull request validation only; not creating a tag."
+
+  tag-release:
+    name: Tag Semantic Release
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create tag from successful main workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git tag --points-at HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -q .; then
+            echo "HEAD already has a semantic version tag; skipping."
+            exit 0
+          fi
+
+          subject="$(git log -1 --pretty=%s)"
+          body="$(git log -1 --pretty=%B)"
+          bump=""
+          header="${subject%%:*}"
+          type="${header%%(*}"
+          type="${type%!}"
+
+          if grep -q 'BREAKING CHANGE:' <<<"${body}" || [[ "${header}" == *"!" ]]; then
+            bump="major"
+          else
+            case "${type}" in
+              feat)
+                bump="minor"
+                ;;
+              fix)
+                bump="patch"
+                ;;
+            esac
+          fi
+
+          if [[ -z "${bump}" ]]; then
+            echo "Commit does not request a semantic release tag; skipping."
+            echo "Latest commit: ${subject}"
+            exit 0
+          fi
+
+          latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n1)"
+          if [[ -z "${latest_tag}" ]]; then
+            latest_tag="v0.0.0"
+          fi
+
+          version="${latest_tag#v}"
+          IFS='.' read -r major minor patch <<<"${version}"
+
+          case "${bump}" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+          esac
+
+          next_tag="v${major}.${minor}.${patch}"
+          echo "Computed release tag ${next_tag} from commit: ${subject}"
+
+          echo "Creating ${next_tag}"
           git tag -a "${next_tag}" -m "${next_tag}"
           git push origin "${next_tag}"
