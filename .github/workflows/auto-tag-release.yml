@@ -1,0 +1,82 @@
+name: Auto Tag Release
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: auto-tag-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  tag-release:
+    name: Tag Semantic Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create tag from commit prefix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if git tag --points-at HEAD --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -q .; then
+            echo "HEAD already has a semantic version tag; skipping."
+            exit 0
+          fi
+
+          subject="$(git log -1 --pretty=%s)"
+          body="$(git log -1 --pretty=%B)"
+          bump=""
+
+          if [[ "${subject}" =~ ^[a-zA-Z]+(\([^)]+\))?!: ]] || grep -q 'BREAKING CHANGE:' <<<"${body}"; then
+            bump="major"
+          elif [[ "${subject}" =~ ^feat(\([^)]+\))?: ]]; then
+            bump="minor"
+          elif [[ "${subject}" =~ ^fix(\([^)]+\))?: ]]; then
+            bump="patch"
+          else
+            echo "Commit does not request a semantic release tag; skipping."
+            echo "Latest commit: ${subject}"
+            exit 0
+          fi
+
+          latest_tag="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-version:refname | head -n1)"
+          if [[ -z "${latest_tag}" ]]; then
+            latest_tag="v0.0.0"
+          fi
+
+          version="${latest_tag#v}"
+          IFS='.' read -r major minor patch <<<"${version}"
+
+          case "${bump}" in
+            major)
+              major=$((major + 1))
+              minor=0
+              patch=0
+              ;;
+            minor)
+              minor=$((minor + 1))
+              patch=0
+              ;;
+            patch)
+              patch=$((patch + 1))
+              ;;
+          esac
+
+          next_tag="v${major}.${minor}.${patch}"
+          echo "Creating ${next_tag} from commit: ${subject}"
+          git tag -a "${next_tag}" -m "${next_tag}"
+          git push origin "${next_tag}"
