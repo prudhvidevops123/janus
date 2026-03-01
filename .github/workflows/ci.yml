@@ -16,7 +16,6 @@ concurrency:
 permissions:
   contents: read
   pull-requests: read
-  security-events: write
 
 env:
   GOFLAGS: -mod=readonly
@@ -263,18 +262,54 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          ROOT_DIR="${PWD}"
           mkdir -p dist
           VERSION="v0.0.0-dry-run"
           COMMIT="${GITHUB_SHA::12}"
           BUILD_DATE="1970-01-01T00:00:00Z"
-          for target in "linux amd64" "windows amd64 .exe" "darwin amd64"; do
-            read -r GOOS_TARGET GOARCH_TARGET EXT <<<"${target}"
-            OUT="dist/nomos-${VERSION}-${GOOS_TARGET}-${GOARCH_TARGET}${EXT}"
+          : > dist/nomos-checksums.txt
+          for target in \
+            "linux amd64 tar.gz" \
+            "linux arm64 tar.gz" \
+            "darwin amd64 tar.gz" \
+            "darwin arm64 tar.gz" \
+            "windows amd64 zip" \
+            "windows arm64 zip"; do
+            read -r GOOS_TARGET GOARCH_TARGET PACKAGE_FORMAT <<<"${target}"
+            STAGE_DIR="$(mktemp -d)"
+            BIN_NAME="nomos"
+            if [[ "${GOOS_TARGET}" == "windows" ]]; then
+              BIN_NAME="nomos.exe"
+            fi
             GOOS="${GOOS_TARGET}" GOARCH="${GOARCH_TARGET}" \
               go build -ldflags "-X github.com/safe-agentic-world/nomos/internal/version.Version=${VERSION} -X github.com/safe-agentic-world/nomos/internal/version.Commit=${COMMIT} -X github.com/safe-agentic-world/nomos/internal/version.BuildDate=${BUILD_DATE}" \
-              -o "${OUT}" ./cmd/nomos
-            sha256sum "${OUT}" > "${OUT}.sha256"
+              -o "${STAGE_DIR}/${BIN_NAME}" ./cmd/nomos
+            OUT="dist/nomos-${GOOS_TARGET}-${GOARCH_TARGET}.${PACKAGE_FORMAT}"
+            if [[ "${PACKAGE_FORMAT}" == "zip" ]]; then
+              (cd "${STAGE_DIR}" && zip -q "${ROOT_DIR}/${OUT}" "${BIN_NAME}")
+            else
+              tar -C "${STAGE_DIR}" -czf "${OUT}" "${BIN_NAME}"
+            fi
+            (cd dist && sha256sum "nomos-${GOOS_TARGET}-${GOARCH_TARGET}.${PACKAGE_FORMAT}") >> dist/nomos-checksums.txt
+            rm -rf "${STAGE_DIR}"
           done
+
+          WIN_HASH="$(awk '/  nomos-windows-amd64.zip$/ { print $1 }' dist/nomos-checksums.txt)"
+          cat > dist/nomos-scoop.json <<EOF
+          {
+            "version": "${VERSION#v}",
+            "description": "Zero-trust execution gateway for autonomous agents",
+            "homepage": "https://github.com/safe-agentic-world/nomos",
+            "license": "Apache-2.0",
+            "architecture": {
+              "64bit": {
+                "url": "https://github.com/safe-agentic-world/nomos/releases/download/${VERSION}/nomos-windows-amd64.zip",
+                "hash": "${WIN_HASH}"
+              }
+            },
+            "bin": "nomos.exe"
+          }
+          EOF
 
   release-binaries:
     name: Release Binaries
@@ -297,22 +332,58 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
-      - name: Build binary
+      - name: Build release archives
         shell: bash
         run: |
           set -euo pipefail
+          ROOT_DIR="${PWD}"
           mkdir -p dist
           VERSION="${GITHUB_REF_NAME}"
           COMMIT="${GITHUB_SHA::12}"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          for target in "linux amd64" "windows amd64 .exe" "darwin amd64"; do
-            read -r GOOS_TARGET GOARCH_TARGET EXT <<<"${target}"
-            OUT="dist/nomos-${VERSION}-${GOOS_TARGET}-${GOARCH_TARGET}${EXT}"
+          : > dist/nomos-checksums.txt
+          for target in \
+            "linux amd64 tar.gz" \
+            "linux arm64 tar.gz" \
+            "darwin amd64 tar.gz" \
+            "darwin arm64 tar.gz" \
+            "windows amd64 zip" \
+            "windows arm64 zip"; do
+            read -r GOOS_TARGET GOARCH_TARGET PACKAGE_FORMAT <<<"${target}"
+            STAGE_DIR="$(mktemp -d)"
+            BIN_NAME="nomos"
+            if [[ "${GOOS_TARGET}" == "windows" ]]; then
+              BIN_NAME="nomos.exe"
+            fi
             GOOS="${GOOS_TARGET}" GOARCH="${GOARCH_TARGET}" \
               go build -ldflags "-X github.com/safe-agentic-world/nomos/internal/version.Version=${VERSION} -X github.com/safe-agentic-world/nomos/internal/version.Commit=${COMMIT} -X github.com/safe-agentic-world/nomos/internal/version.BuildDate=${BUILD_DATE}" \
-              -o "${OUT}" ./cmd/nomos
-            sha256sum "${OUT}" > "${OUT}.sha256"
+              -o "${STAGE_DIR}/${BIN_NAME}" ./cmd/nomos
+            OUT="dist/nomos-${GOOS_TARGET}-${GOARCH_TARGET}.${PACKAGE_FORMAT}"
+            if [[ "${PACKAGE_FORMAT}" == "zip" ]]; then
+              (cd "${STAGE_DIR}" && zip -q "${ROOT_DIR}/${OUT}" "${BIN_NAME}")
+            else
+              tar -C "${STAGE_DIR}" -czf "${OUT}" "${BIN_NAME}"
+            fi
+            (cd dist && sha256sum "nomos-${GOOS_TARGET}-${GOARCH_TARGET}.${PACKAGE_FORMAT}") >> dist/nomos-checksums.txt
+            rm -rf "${STAGE_DIR}"
           done
+
+          WIN_HASH="$(awk '/  nomos-windows-amd64.zip$/ { print $1 }' dist/nomos-checksums.txt)"
+          cat > dist/nomos-scoop.json <<EOF
+          {
+            "version": "${VERSION#v}",
+            "description": "Zero-trust execution gateway for autonomous agents",
+            "homepage": "https://github.com/safe-agentic-world/nomos",
+            "license": "Apache-2.0",
+            "architecture": {
+              "64bit": {
+                "url": "https://github.com/safe-agentic-world/nomos/releases/download/${VERSION}/nomos-windows-amd64.zip",
+                "hash": "${WIN_HASH}"
+              }
+            },
+            "bin": "nomos.exe"
+          }
+          EOF
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

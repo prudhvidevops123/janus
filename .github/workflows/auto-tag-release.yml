@@ -88,7 +88,7 @@ jobs:
 
   tag-release:
     name: Tag Semantic Release
-    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main'
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.actor.login != 'github-actions[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -135,6 +135,7 @@ jobs:
             });
             const commitMessage = commitResponse.data.commit.message;
             const { bump, subject } = determineBump(commitMessage);
+            let tagName = "";
 
             if (!bump) {
               core.info(`Commit does not request a semantic release tag; skipping. Latest commit: ${subject}`);
@@ -152,8 +153,9 @@ jobs:
                 continue;
               }
               if (ref.object.type === "commit" && ref.object.sha === headSha) {
-                core.info("HEAD already has a semantic version tag; skipping.");
-                return;
+                tagName = ref.ref.replace("refs/tags/", "");
+                core.info(`HEAD already has semantic version tag ${tagName}.`);
+                break;
               }
               if (ref.object.type === "tag") {
                 const tagObject = await github.rest.git.getTag({
@@ -162,8 +164,9 @@ jobs:
                   tag_sha: ref.object.sha,
                 });
                 if (tagObject.data.object.type === "commit" && tagObject.data.object.sha === headSha) {
-                  core.info("HEAD already has a semantic version tag; skipping.");
-                  return;
+                  tagName = ref.ref.replace("refs/tags/", "");
+                  core.info(`HEAD already has semantic version tag ${tagName}.`);
+                  break;
                 }
               }
             }
@@ -180,29 +183,41 @@ jobs:
               }
             }
 
-            if (bump === "major") {
-              latest = [latest[0] + 1, 0, 0];
-            } else if (bump === "minor") {
-              latest = [latest[0], latest[1] + 1, 0];
-            } else {
-              latest = [latest[0], latest[1], latest[2] + 1];
+            if (!tagName) {
+              if (bump === "major") {
+                latest = [latest[0] + 1, 0, 0];
+              } else if (bump === "minor") {
+                latest = [latest[0], latest[1] + 1, 0];
+              } else {
+                latest = [latest[0], latest[1], latest[2] + 1];
+              }
+
+              tagName = `v${latest[0]}.${latest[1]}.${latest[2]}`;
+              core.info(`Computed release tag ${tagName} from commit: ${subject}`);
+
+              const tagObject = await github.rest.git.createTag({
+                owner,
+                repo,
+                tag: tagName,
+                message: tagName,
+                object: headSha,
+                type: "commit",
+              });
+
+              await github.rest.git.createRef({
+                owner,
+                repo,
+                ref: `refs/tags/${tagName}`,
+                sha: tagObject.data.sha,
+              });
             }
 
-            const nextTag = `v${latest[0]}.${latest[1]}.${latest[2]}`;
-            core.info(`Computed release tag ${nextTag} from commit: ${subject}`);
-
-            const tagObject = await github.rest.git.createTag({
+            await github.rest.repos.createDispatchEvent({
               owner,
               repo,
-              tag: nextTag,
-              message: nextTag,
-              object: headSha,
-              type: "commit",
-            });
-
-            await github.rest.git.createRef({
-              owner,
-              repo,
-              ref: `refs/tags/${nextTag}`,
-              sha: tagObject.data.sha,
+              event_type: "publish-release",
+              client_payload: {
+                tag: tagName,
+                sha: headSha,
+              },
             });

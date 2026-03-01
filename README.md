@@ -34,6 +34,59 @@ Nomos adds an actual policy boundary:
 
 ---
 
+## Install
+
+### Go users
+
+```bash
+go install github.com/safe-agentic-world/nomos/cmd/nomos@latest
+```
+
+### macOS and Linux quick install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/safe-agentic-world/nomos/main/install.sh | sh
+```
+
+Optional:
+
+- set `NOMOS_VERSION=v0.0.1` to pin a version
+- set `INSTALL_DIR=$HOME/.local/bin` to install without sudo
+
+### Homebrew
+
+Tap once, then install normally:
+
+```bash
+brew tap safe-agentic-world/nomos
+brew install nomos
+```
+
+### Windows (Scoop)
+
+Add the bucket once, then install normally:
+
+```powershell
+scoop bucket add nomos https://github.com/safe-agentic-world/nomos
+scoop install nomos
+```
+
+### Direct download
+
+GitHub Releases publish these archives for each release:
+
+- `nomos-linux-amd64.tar.gz`
+- `nomos-linux-arm64.tar.gz`
+- `nomos-darwin-amd64.tar.gz`
+- `nomos-darwin-arm64.tar.gz`
+- `nomos-windows-amd64.zip`
+- `nomos-windows-arm64.zip`
+- `nomos-checksums.txt`
+
+Verify the archive with `nomos-checksums.txt`, then extract `nomos` (or `nomos.exe`) into your `PATH`.
+
+---
+
 ## 2-Minute Demo
 
 ### 1) Build
