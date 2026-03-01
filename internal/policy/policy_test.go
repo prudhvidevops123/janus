@@ -1,8 +1,10 @@
 package policy
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/safe-agentic-world/nomos/internal/normalize"
@@ -154,5 +156,101 @@ func TestPolicyExplainDenyWinsReportsOnlyDenyRules(t *testing.T) {
 	}
 	if len(explanation.AllowRuleIDs) != 1 || explanation.AllowRuleIDs[0] != "allow-net" {
 		t.Fatalf("expected allow rule ids retained for preview only, got %+v", explanation.AllowRuleIDs)
+	}
+}
+
+func TestLoadBundleYAMLJSONParity(t *testing.T) {
+	jsonBundle, err := LoadBundle(filepath.Clean(filepath.Join("..", "..", "policies", "safe-dev.json")))
+	if err != nil {
+		t.Fatalf("load json bundle: %v", err)
+	}
+	yamlBundle, err := LoadBundle(filepath.Clean(filepath.Join("..", "..", "policies", "safe-dev.yaml")))
+	if err != nil {
+		t.Fatalf("load yaml bundle: %v", err)
+	}
+	if jsonBundle.Hash != yamlBundle.Hash {
+		t.Fatalf("expected equal hashes, got json=%s yaml=%s", jsonBundle.Hash, yamlBundle.Hash)
+	}
+
+	fixtures := []normalize.NormalizedAction{
+		{ActionType: "fs.read", Resource: "file://workspace/README.md", Principal: "system", Agent: "nomos", Environment: "dev"},
+		{ActionType: "fs.write", Resource: "file://workspace/docs/guide.md", Principal: "system", Agent: "nomos", Environment: "dev"},
+		{ActionType: "process.exec", Resource: "file://workspace/", Principal: "system", Agent: "nomos", Environment: "dev"},
+	}
+	jsonEngine := NewEngine(jsonBundle)
+	yamlEngine := NewEngine(yamlBundle)
+	for _, fixture := range fixtures {
+		jsonDecision := jsonEngine.Evaluate(fixture)
+		yamlDecision := yamlEngine.Evaluate(fixture)
+		jsonBytes, err := json.Marshal(jsonDecision)
+		if err != nil {
+			t.Fatalf("marshal json decision: %v", err)
+		}
+		yamlBytes, err := json.Marshal(yamlDecision)
+		if err != nil {
+			t.Fatalf("marshal yaml decision: %v", err)
+		}
+		if string(jsonBytes) != string(yamlBytes) {
+			t.Fatalf("expected identical decisions for %+v\njson=%s\nyaml=%s", fixture, string(jsonBytes), string(yamlBytes))
+		}
+	}
+}
+
+func TestLoadBundleYMLExtensionSupported(t *testing.T) {
+	dir := t.TempDir()
+	data, err := os.ReadFile(filepath.Clean(filepath.Join("..", "..", "policies", "safe-dev.yaml")))
+	if err != nil {
+		t.Fatalf("read source yaml: %v", err)
+	}
+	ymlPath := filepath.Join(dir, "safe-dev.yml")
+	if err := os.WriteFile(ymlPath, data, 0o600); err != nil {
+		t.Fatalf("write yml bundle: %v", err)
+	}
+	if _, err := LoadBundle(ymlPath); err != nil {
+		t.Fatalf("expected .yml bundle to load, got %v", err)
+	}
+}
+
+func TestLoadBundleYAMLRejectsUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	topLevelPath := filepath.Join(dir, "top.yaml")
+	topLevel := "version: v1\nrules:\n  - id: r1\n    action_type: fs.read\n    resource: file://workspace/README.md\n    decision: ALLOW\nextra_field: nope\n"
+	if err := os.WriteFile(topLevelPath, []byte(topLevel), 0o600); err != nil {
+		t.Fatalf("write top-level yaml: %v", err)
+	}
+	if _, err := LoadBundle(topLevelPath); err == nil || !strings.Contains(strings.ToLower(err.Error()), "field") {
+		t.Fatalf("expected unknown top-level field error, got %v", err)
+	}
+
+	nestedPath := filepath.Join(dir, "nested.yaml")
+	nested := "version: v1\nrules:\n  - id: r1\n    action_type: fs.read\n    resource: file://workspace/README.md\n    decision: ALLOW\n    unexpected_nested: nope\n"
+	if err := os.WriteFile(nestedPath, []byte(nested), 0o600); err != nil {
+		t.Fatalf("write nested yaml: %v", err)
+	}
+	if _, err := LoadBundle(nestedPath); err == nil || !strings.Contains(strings.ToLower(err.Error()), "field") {
+		t.Fatalf("expected unknown nested field error, got %v", err)
+	}
+}
+
+func TestLoadBundleYAMLRejectsDuplicateKeys(t *testing.T) {
+	dir := t.TempDir()
+	bundlePath := filepath.Join(dir, "dup.yaml")
+	data := "version: v1\nrules:\n  - id: r1\n    action_type: fs.read\n    action_type: fs.write\n    resource: file://workspace/README.md\n    decision: ALLOW\n"
+	if err := os.WriteFile(bundlePath, []byte(data), 0o600); err != nil {
+		t.Fatalf("write duplicate yaml: %v", err)
+	}
+	if _, err := LoadBundle(bundlePath); err == nil || !strings.Contains(strings.ToLower(err.Error()), "duplicate yaml key") {
+		t.Fatalf("expected duplicate key error, got %v", err)
+	}
+}
+
+func TestLoadBundleHashGoldenVectorForSafeDev(t *testing.T) {
+	bundle, err := LoadBundle(filepath.Clean(filepath.Join("..", "..", "policies", "safe-dev.yaml")))
+	if err != nil {
+		t.Fatalf("load yaml bundle: %v", err)
+	}
+	const expected = "57392821c713e5623abfe6e6594249e79614a57ae0c2b00123d0bed5132cb785"
+	if bundle.Hash != expected {
+		t.Fatalf("expected hash %s, got %s", expected, bundle.Hash)
 	}
 }

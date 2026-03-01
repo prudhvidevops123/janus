@@ -7,32 +7,35 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
+
+	"github.com/safe-agentic-world/nomos/internal/canonicaljson"
+	"gopkg.in/yaml.v3"
 )
 
 type Bundle struct {
-	Version string `json:"version"`
-	Rules   []Rule `json:"rules"`
-	Hash    string `json:"-"`
+	Version string `json:"version" yaml:"version"`
+	Rules   []Rule `json:"rules" yaml:"rules"`
+	Hash    string `json:"-" yaml:"-"`
 }
 
 type Rule struct {
-	ID           string         `json:"id"`
-	ActionType   string         `json:"action_type"`
-	Resource     string         `json:"resource"`
-	Decision     string         `json:"decision"`
-	Principals   []string       `json:"principals,omitempty"`
-	Agents       []string       `json:"agents,omitempty"`
-	Environments []string       `json:"environments,omitempty"`
-	RiskFlags    []string       `json:"risk_flags,omitempty"`
-	Obligations  map[string]any `json:"obligations,omitempty"`
+	ID           string         `json:"id" yaml:"id"`
+	ActionType   string         `json:"action_type" yaml:"action_type"`
+	Resource     string         `json:"resource" yaml:"resource"`
+	Decision     string         `json:"decision" yaml:"decision"`
+	Principals   []string       `json:"principals,omitempty" yaml:"principals,omitempty"`
+	Agents       []string       `json:"agents,omitempty" yaml:"agents,omitempty"`
+	Environments []string       `json:"environments,omitempty" yaml:"environments,omitempty"`
+	RiskFlags    []string       `json:"risk_flags,omitempty" yaml:"risk_flags,omitempty"`
+	Obligations  map[string]any `json:"obligations,omitempty" yaml:"obligations,omitempty"`
 }
 
 type LoadOptions struct {
@@ -53,14 +56,9 @@ func LoadBundleWithOptions(path string, options LoadOptions) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, fmt.Errorf("read bundle: %w", err)
 	}
-	var bundle Bundle
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&bundle); err != nil {
-		return Bundle{}, fmt.Errorf("decode bundle: %w", err)
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return Bundle{}, errors.New("bundle contains trailing data")
+	bundle, err := decodeBundle(data, path)
+	if err != nil {
+		return Bundle{}, err
 	}
 	if err := bundle.Validate(); err != nil {
 		return Bundle{}, err
@@ -70,9 +68,109 @@ func LoadBundleWithOptions(path string, options LoadOptions) (Bundle, error) {
 			return Bundle{}, err
 		}
 	}
-	sum := sha256.Sum256(data)
-	bundle.Hash = hex.EncodeToString(sum[:])
+	canonical, err := canonicalBundleBytes(bundle)
+	if err != nil {
+		return Bundle{}, fmt.Errorf("canonicalize bundle: %w", err)
+	}
+	bundle.Hash = canonicaljson.HashSHA256(canonical)
 	return bundle, nil
+}
+
+func decodeBundle(data []byte, path string) (Bundle, error) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".yaml", ".yml":
+		return decodeYAMLBundle(data)
+	default:
+		return decodeJSONBundle(data)
+	}
+}
+
+func decodeJSONBundle(data []byte) (Bundle, error) {
+	var bundle Bundle
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&bundle); err != nil {
+		return Bundle{}, fmt.Errorf("decode bundle: %w", err)
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return Bundle{}, errors.New("bundle contains trailing data")
+	}
+	return bundle, nil
+}
+
+func decodeYAMLBundle(data []byte) (Bundle, error) {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return Bundle{}, fmt.Errorf("decode bundle: %w", err)
+	}
+	if len(root.Content) == 0 {
+		return Bundle{}, errors.New("decode bundle: empty yaml document")
+	}
+	if err := rejectDuplicateYAMLKeys(root.Content[0], "$"); err != nil {
+		return Bundle{}, err
+	}
+	var bundle Bundle
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&bundle); err != nil {
+		return Bundle{}, fmt.Errorf("decode bundle: %w", err)
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return Bundle{}, errors.New("bundle contains trailing data")
+		}
+		return Bundle{}, fmt.Errorf("decode bundle: %w", err)
+	}
+	return bundle, nil
+}
+
+func rejectDuplicateYAMLKeys(node *yaml.Node, path string) error {
+	if node == nil {
+		return nil
+	}
+	switch node.Kind {
+	case yaml.DocumentNode:
+		for _, child := range node.Content {
+			if err := rejectDuplicateYAMLKeys(child, path); err != nil {
+				return err
+			}
+		}
+	case yaml.MappingNode:
+		seen := map[string]struct{}{}
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			key := node.Content[i]
+			value := node.Content[i+1]
+			if _, ok := seen[key.Value]; ok {
+				return fmt.Errorf("decode bundle: duplicate yaml key %q at %s", key.Value, path)
+			}
+			seen[key.Value] = struct{}{}
+			childPath := path + "." + key.Value
+			if path == "$" {
+				childPath = "$." + key.Value
+			}
+			if err := rejectDuplicateYAMLKeys(value, childPath); err != nil {
+				return err
+			}
+		}
+	case yaml.SequenceNode:
+		for idx, child := range node.Content {
+			if err := rejectDuplicateYAMLKeys(child, fmt.Sprintf("%s[%d]", path, idx)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func canonicalBundleBytes(bundle Bundle) ([]byte, error) {
+	typed := bundle
+	typed.Hash = ""
+	encoded, err := json.Marshal(typed)
+	if err != nil {
+		return nil, err
+	}
+	return canonicaljson.Canonicalize(encoded)
 }
 
 func verifyBundleSignature(bundleData []byte, signaturePath, publicKeyPath string) error {

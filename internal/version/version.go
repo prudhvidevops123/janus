@@ -3,6 +3,7 @@ package version
 import (
 	"fmt"
 	"runtime/debug"
+	"strings"
 )
 
 var (
@@ -22,6 +23,7 @@ type Info struct {
 	Commit    string
 	BuildDate string
 	GoVersion string
+	Modified  bool
 }
 
 func Current() Info {
@@ -38,6 +40,7 @@ func currentFromBuildInfo(buildInfo *debug.BuildInfo) Info {
 		Commit:    Commit,
 		BuildDate: BuildDate,
 		GoVersion: "unknown",
+		Modified:  false,
 	}
 	if buildInfo != nil {
 		info.GoVersion = buildInfo.GoVersion
@@ -54,6 +57,8 @@ func currentFromBuildInfo(buildInfo *debug.BuildInfo) Info {
 				if info.BuildDate == defaultBuildDate && setting.Value != "" {
 					info.BuildDate = setting.Value
 				}
+			case "vcs.modified":
+				info.Modified = strings.EqualFold(strings.TrimSpace(setting.Value), "true")
 			}
 		}
 	}
@@ -61,5 +66,26 @@ func currentFromBuildInfo(buildInfo *debug.BuildInfo) Info {
 }
 
 func (i Info) String() string {
-	return fmt.Sprintf("version=%s commit=%s build_date=%s go=%s", i.Version, i.Commit, i.BuildDate, i.GoVersion)
+	parts := []string{
+		fmt.Sprintf("version=%s", i.Version),
+	}
+	if strings.TrimSpace(i.Commit) != "" && i.Commit != defaultCommit {
+		parts = append(parts, fmt.Sprintf("commit=%s", shortCommit(i.Commit)))
+	}
+	if strings.TrimSpace(i.BuildDate) != "" && i.BuildDate != defaultBuildDate {
+		parts = append(parts, fmt.Sprintf("build_date=%s", i.BuildDate))
+	}
+	if i.Modified {
+		parts = append(parts, "dirty=true")
+	}
+	parts = append(parts, fmt.Sprintf("go=%s", i.GoVersion))
+	return strings.Join(parts, " ")
+}
+
+func shortCommit(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if len(trimmed) <= 12 {
+		return trimmed
+	}
+	return trimmed[:12]
 }

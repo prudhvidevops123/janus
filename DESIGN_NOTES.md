@@ -6,7 +6,8 @@
 - Normalization treats traversal attempts (`..`) as the deterministic proxy for symlink escape rejection; executor-time resolution is required for full TOCTOU-safe symlink handling.
 - `url://` normalization lowercases hosts and strips ports 80/443 even without scheme; this is a conservative default for determinism until explicit schemes are introduced.
 - MCP requests derive `action_id` and `trace_id` from the MCP request id (`mcp_<id>`) to avoid non-deterministic ID generation.
-- Policy bundles are JSON-only with exact-match rules for `action_type` and `resource` to keep evaluation deterministic and deny-by-default.
+- Policy bundles now accept JSON and YAML, but YAML is treated strictly as a convenience input format: Nomos rejects duplicate keys before decode, enforces known fields during typed decode, and computes `policy_bundle_hash` only from canonical JSON of the typed bundle so equivalent JSON/YAML inputs remain deterministic.
+- For CLI policy commands, bundle-load parse/schema failures are classified as `VALIDATION_ERROR`, while action normalization failures remain `NORMALIZATION_ERROR`; this keeps M23 error taxonomy deterministic without changing policy semantics.
 - Authentication supports dev API keys and service HMAC signatures; agent runtime identity is verified separately via HMAC to avoid agent-supplied identity.
 - Policy matching supports deterministic glob patterns and optional identity/risk filters; rule order does not affect decisions (deny-wins).
 - Risk flags are computed from normalized action and deterministic thresholds (large IO at 32KB, high fanout at 100 actions) without agent-supplied inputs.

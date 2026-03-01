@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/safe-agentic-world/nomos/internal/assurance"
+	"github.com/safe-agentic-world/nomos/internal/doctor"
 	"github.com/safe-agentic-world/nomos/internal/gateway"
 	"github.com/safe-agentic-world/nomos/internal/normalize"
 	"github.com/safe-agentic-world/nomos/internal/policy"
@@ -117,6 +118,164 @@ func TestHelpTextStability(t *testing.T) {
 	}
 }
 
+func TestVersionOutputIncludesExpectedFields(t *testing.T) {
+	out := versionOutput()
+	for _, want := range []string{"version=", "go="} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected version output to contain %q, got %q", want, out)
+		}
+	}
+}
+
+func TestProtocolSafeMCPSinkRewritesStdoutToStderr(t *testing.T) {
+	got := protocolSafeMCPSink("stdout, sqlite:test.db , webhook:https://example.com/audit")
+	want := "stderr,sqlite:test.db,webhook:https://example.com/audit"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestProtocolSafeMCPSinkDefaultsToStderr(t *testing.T) {
+	if got := protocolSafeMCPSink(""); got != "stderr" {
+		t.Fatalf("expected stderr default, got %q", got)
+	}
+}
+
+func TestMCPSinkRewriteDetection(t *testing.T) {
+	if !mcpSinkRewritesStdout("stdout,sqlite:test.db") {
+		t.Fatal("expected stdout sink rewrite detection")
+	}
+	if mcpSinkRewritesStdout("") {
+		t.Fatal("did not expect empty sink to trigger stdout rewrite detection")
+	}
+	if mcpSinkRewritesStdout("stderr,sqlite:test.db") {
+		t.Fatal("did not expect stderr-only sink to trigger stdout rewrite detection")
+	}
+}
+
+func TestDecorateDoctorSummaryPlainForNonTerminalWriters(t *testing.T) {
+	report := doctor.Report{
+		OverallStatus: "READY",
+		Checks: []doctor.Check{
+			{ID: "config.load", Status: "PASS", Message: "config loaded"},
+		},
+	}
+	got := decorateDoctorSummary(&bytes.Buffer{}, report)
+	if strings.Contains(got, "\x1b[") {
+		t.Fatalf("expected no ansi escapes for non-terminal writer, got %q", got)
+	}
+	if !strings.Contains(got, "Nomos Doctor Report") || !strings.Contains(got, "[PASS]") || !strings.Contains(got, "Result: READY") {
+		t.Fatalf("expected stable human summary, got %q", got)
+	}
+}
+
+func TestDecorateHelpTextPlainForNonTerminalWriters(t *testing.T) {
+	input := "usage: nomos mcp [flags]\n  -c, --config <path>          config json path\n\nexample:\n  nomos mcp -c config.example.json\n"
+	got := decorateHelpText(&bytes.Buffer{}, input)
+	if got != input {
+		t.Fatalf("expected help text to stay unchanged for non-terminal writer\nwant=%q\ngot=%q", input, got)
+	}
+}
+
+func TestDocumentedArtifactsExist(t *testing.T) {
+	required := []string{
+		filepath.Join("..", "..", "docs", "obligations.md"),
+		filepath.Join("..", "..", "policies", "safe-dev.json"),
+		filepath.Join("..", "..", "policies", "safe-dev.yaml"),
+		filepath.Join("..", "..", "policies", "guarded-prod.json"),
+		filepath.Join("..", "..", "policies", "guarded-prod.yaml"),
+		filepath.Join("..", "..", "policies", "unsafe.json"),
+		filepath.Join("..", "..", "policies", "unsafe.yaml"),
+	}
+	for _, path := range required {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected artifact %s: %v", path, err)
+		}
+	}
+}
+
+func TestPolicyCommandsSupportYAMLBundles(t *testing.T) {
+	dir := t.TempDir()
+	actionPath := filepath.Join(dir, "action.json")
+	actionBody := `{"schema_version":"v1","action_id":"act1","action_type":"fs.read","resource":"file://workspace/README.md","params":{},"principal":"system","agent":"nomos","environment":"dev","trace_id":"trace1","context":{"extensions":{}}}`
+	if err := os.WriteFile(actionPath, []byte(actionBody), 0o600); err != nil {
+		t.Fatalf("write action: %v", err)
+	}
+	bundlePath := filepath.Clean(filepath.Join("..", "..", "policies", "safe-dev.yaml"))
+	var testOut bytes.Buffer
+	testSummary, err := executePolicyTest([]string{"--action", actionPath, "--bundle", bundlePath}, &testOut)
+	if err != nil {
+		t.Fatalf("execute policy test: %v", err)
+	}
+	var explainOut bytes.Buffer
+	explainSummary, err := executePolicyExplain([]string{"--action", actionPath, "--bundle", bundlePath}, &explainOut, func(string) string { return "" })
+	if err != nil {
+		t.Fatalf("execute policy explain: %v", err)
+	}
+
+	if !bytes.Contains(testOut.Bytes(), []byte(`"decision":"ALLOW"`)) {
+		t.Fatalf("expected policy test output to allow, got %s", testOut.String())
+	}
+	if !bytes.Contains(explainOut.Bytes(), []byte(`"decision": "ALLOW"`)) {
+		t.Fatalf("expected policy explain output to allow, got %s", explainOut.String())
+	}
+	if testSummary.Decision != "ALLOW" || testSummary.MatchedRuleCount == 0 || testSummary.PolicyBundleHash == "" {
+		t.Fatalf("unexpected policy test summary: %+v", testSummary)
+	}
+	if explainSummary.Decision != "ALLOW" || explainSummary.MatchedRuleCount == 0 || explainSummary.AssuranceLevel == "" {
+		t.Fatalf("unexpected policy explain summary: %+v", explainSummary)
+	}
+}
+
+func TestPolicyCommandErrorClassification(t *testing.T) {
+	dir := t.TempDir()
+	validActionPath := filepath.Join(dir, "valid-action.json")
+	validAction := `{"schema_version":"v1","action_id":"act1","action_type":"fs.read","resource":"file://workspace/README.md","params":{},"principal":"system","agent":"nomos","environment":"dev","trace_id":"trace1","context":{"extensions":{}}}`
+	if err := os.WriteFile(validActionPath, []byte(validAction), 0o600); err != nil {
+		t.Fatalf("write valid action: %v", err)
+	}
+	invalidActionPath := filepath.Join(dir, "invalid-action.json")
+	invalidAction := `{"schema_version":"v1","action_id":"act2","action_type":"fs.read","resource":"not-a-uri","params":{},"principal":"system","agent":"nomos","environment":"dev","trace_id":"trace2","context":{"extensions":{}}}`
+	if err := os.WriteFile(invalidActionPath, []byte(invalidAction), 0o600); err != nil {
+		t.Fatalf("write invalid action: %v", err)
+	}
+	unknownTopLevelPath := filepath.Join(dir, "unknown-top.yaml")
+	unknownTopLevel := "version: v1\nrules: []\nextra: true\n"
+	if err := os.WriteFile(unknownTopLevelPath, []byte(unknownTopLevel), 0o600); err != nil {
+		t.Fatalf("write unknown top-level bundle: %v", err)
+	}
+	unknownNestedPath := filepath.Join(dir, "unknown-nested.yaml")
+	unknownNested := "version: v1\nrules:\n  - id: safe-dev-read-workspace\n    action_type: fs.read\n    resource: file://workspace/**\n    decision: ALLOW\n    principals: [system]\n    agents: [nomos]\n    environments: [dev]\n    extra_nested: true\n"
+	if err := os.WriteFile(unknownNestedPath, []byte(unknownNested), 0o600); err != nil {
+		t.Fatalf("write unknown nested bundle: %v", err)
+	}
+	validBundlePath := filepath.Clean(filepath.Join("..", "..", "policies", "safe-dev.yaml"))
+
+	_, err := executePolicyTest([]string{"--action", validActionPath, "--bundle", unknownTopLevelPath}, &bytes.Buffer{})
+	if code := policyErrorCode(err); code != policyResultValidationError {
+		t.Fatalf("expected top-level unknown field to classify as %s, got %q err=%v", policyResultValidationError, code, err)
+	}
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "field") {
+		t.Fatalf("expected field error for top-level unknown field, got %v", err)
+	}
+
+	_, err = executePolicyTest([]string{"--action", validActionPath, "--bundle", unknownNestedPath}, &bytes.Buffer{})
+	if code := policyErrorCode(err); code != policyResultValidationError {
+		t.Fatalf("expected nested unknown field to classify as %s, got %q err=%v", policyResultValidationError, code, err)
+	}
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "field") {
+		t.Fatalf("expected field error for nested unknown field, got %v", err)
+	}
+
+	_, err = executePolicyTest([]string{"--action", invalidActionPath, "--bundle", validBundlePath}, &bytes.Buffer{})
+	if code := policyErrorCode(err); code != policyResultNormError {
+		t.Fatalf("expected invalid resource to classify as %s, got %q err=%v", policyResultNormError, code, err)
+	}
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "normalize action") {
+		t.Fatalf("expected normalize action error, got %v", err)
+	}
+}
+
 func TestDoctorExitCodesAndJSONDeterminism(t *testing.T) {
 	dir := t.TempDir()
 	bundlePath := filepath.Join(dir, "bundle.json")
@@ -150,6 +309,9 @@ func TestDoctorExitCodesAndJSONDeterminism(t *testing.T) {
 	if _, ok := parsed["engine_version"]; !ok {
 		t.Fatal("expected engine_version in json output")
 	}
+	if !strings.Contains(err1.String(), "doctor completed: status=READY") {
+		t.Fatalf("expected READY completion summary on stderr, got %q", err1.String())
+	}
 }
 
 func TestDoctorNotReadyExitCode(t *testing.T) {
@@ -163,6 +325,9 @@ func TestDoctorNotReadyExitCode(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "Result: NOT_READY") {
 		t.Fatalf("expected NOT_READY summary, got: %q", out.String())
+	}
+	if !strings.Contains(errOut.String(), "doctor completed: status=NOT_READY") {
+		t.Fatalf("expected NOT_READY completion summary on stderr, got %q", errOut.String())
 	}
 }
 

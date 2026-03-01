@@ -131,6 +131,8 @@ func recorderFromSink(sink string, redactor *redact.Redactor) (Recorder, error) 
 	switch {
 	case sink == "stdout":
 		return &jsonlRecorder{out: os.Stdout, redactor: redactor}, nil
+	case sink == "stderr":
+		return &jsonlRecorder{out: os.Stderr, redactor: redactor}, nil
 	case strings.HasPrefix(sink, "sqlite://"):
 		return newSQLiteRecorder(strings.TrimPrefix(sink, "sqlite://"), redactor)
 	case strings.HasPrefix(sink, "sqlite:"):

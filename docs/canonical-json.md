@@ -14,7 +14,16 @@ Canonical JSON encoding is used to ensure deterministic hashing across languages
 ## Hashing
 
 - `params_hash = sha256(canonical_json(params_normalized))`
+- `policy_bundle_hash = sha256(canonical_json(typed_bundle))`
 - Hex-encoded lowercase digest.
+
+## YAML Input Rule
+
+- YAML is a convenience authoring format only.
+- When a policy bundle is provided as YAML, Nomos decodes YAML into typed structs first.
+- Nomos then converts that typed bundle into canonical JSON.
+- The canonical JSON form is the only input used for `policy_bundle_hash`.
+- Equivalent JSON and YAML bundles therefore hash identically when they represent the same typed bundle.
 
 ## Test Vector
 

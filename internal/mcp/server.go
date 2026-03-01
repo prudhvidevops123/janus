@@ -99,6 +99,10 @@ func NewServer(bundlePath string, identity identity.VerifiedIdentity, workspaceR
 }
 
 func NewServerWithRuntimeOptions(bundlePath string, identity identity.VerifiedIdentity, workspaceRoot string, maxBytes, maxLines int, approvalsEnabled bool, sandboxEnabled bool, sandboxProfile string, runtimeOptions RuntimeOptions) (*Server, error) {
+	return NewServerWithRuntimeOptionsAndRecorder(bundlePath, identity, workspaceRoot, maxBytes, maxLines, approvalsEnabled, sandboxEnabled, sandboxProfile, runtimeOptions, nil)
+}
+
+func NewServerWithRuntimeOptionsAndRecorder(bundlePath string, identity identity.VerifiedIdentity, workspaceRoot string, maxBytes, maxLines int, approvalsEnabled bool, sandboxEnabled bool, sandboxProfile string, runtimeOptions RuntimeOptions, recorder audit.Recorder) (*Server, error) {
 	if identity.Principal == "" || identity.Agent == "" || identity.Environment == "" {
 		return nil, errors.New("identity is required")
 	}
@@ -116,7 +120,10 @@ func NewServerWithRuntimeOptions(bundlePath string, identity identity.VerifiedId
 	patcher := executor.NewPatchApplier(workspaceRoot, maxBytes)
 	execRunner := executor.NewExecRunner(workspaceRoot, maxBytes)
 	httpRunner := executor.NewHTTPRunner(maxBytes)
-	svc := service.New(engine, reader, writerExec, patcher, execRunner, httpRunner, noopRecorder{}, logger.redactor, nil, nil, sandboxProfile, nil)
+	if recorder == nil {
+		recorder = noopRecorder{}
+	}
+	svc := service.New(engine, reader, writerExec, patcher, execRunner, httpRunner, recorder, logger.redactor, nil, nil, sandboxProfile, nil)
 	return &Server{
 		service:          svc,
 		identity:         identity,
@@ -128,6 +135,13 @@ func NewServerWithRuntimeOptions(bundlePath string, identity identity.VerifiedId
 		logger:           logger,
 		pid:              os.Getpid(),
 	}, nil
+}
+
+func (s *Server) SetAssuranceLevel(level string) {
+	if s == nil {
+		return
+	}
+	s.service.SetAssuranceLevel(level)
 }
 
 func (s *Server) ServeStdio(in io.Reader, out io.Writer) error {
@@ -602,10 +616,15 @@ func RunStdio(bundlePath string, identity identity.VerifiedIdentity, workspaceRo
 }
 
 func RunStdioWithRuntimeOptions(bundlePath string, identity identity.VerifiedIdentity, workspaceRoot string, maxBytes, maxLines int, approvalsEnabled bool, sandboxEnabled bool, sandboxProfile string, runtimeOptions RuntimeOptions) error {
-	server, err := NewServerWithRuntimeOptions(bundlePath, identity, workspaceRoot, maxBytes, maxLines, approvalsEnabled, sandboxEnabled, sandboxProfile, runtimeOptions)
+	return RunStdioWithRuntimeOptionsAndRecorder(bundlePath, identity, workspaceRoot, maxBytes, maxLines, approvalsEnabled, sandboxEnabled, sandboxProfile, runtimeOptions, nil, "")
+}
+
+func RunStdioWithRuntimeOptionsAndRecorder(bundlePath string, identity identity.VerifiedIdentity, workspaceRoot string, maxBytes, maxLines int, approvalsEnabled bool, sandboxEnabled bool, sandboxProfile string, runtimeOptions RuntimeOptions, recorder audit.Recorder, assuranceLevel string) error {
+	server, err := NewServerWithRuntimeOptionsAndRecorder(bundlePath, identity, workspaceRoot, maxBytes, maxLines, approvalsEnabled, sandboxEnabled, sandboxProfile, runtimeOptions, recorder)
 	if err != nil {
 		return err
 	}
+	server.SetAssuranceLevel(assuranceLevel)
 	return server.ServeStdio(os.Stdin, os.Stdout)
 }
 

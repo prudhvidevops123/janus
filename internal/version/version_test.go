@@ -27,6 +27,7 @@ func TestCurrentFromBuildInfoUsesModuleVersionFallback(t *testing.T) {
 		Settings: []debug.BuildSetting{
 			{Key: "vcs.revision", Value: "abc123"},
 			{Key: "vcs.time", Value: "2026-03-01T00:00:00Z"},
+			{Key: "vcs.modified", Value: "true"},
 		},
 	})
 
@@ -41,6 +42,9 @@ func TestCurrentFromBuildInfoUsesModuleVersionFallback(t *testing.T) {
 	}
 	if info.GoVersion != "go1.test" {
 		t.Fatalf("expected go version from build info, got %q", info.GoVersion)
+	}
+	if !info.Modified {
+		t.Fatal("expected modified flag from build info")
 	}
 }
 
@@ -66,6 +70,7 @@ func TestCurrentFromBuildInfoKeepsInjectedValues(t *testing.T) {
 		Settings: []debug.BuildSetting{
 			{Key: "vcs.revision", Value: "abc123"},
 			{Key: "vcs.time", Value: "2026-03-01T00:00:00Z"},
+			{Key: "vcs.modified", Value: "false"},
 		},
 	})
 
@@ -77,5 +82,23 @@ func TestCurrentFromBuildInfoKeepsInjectedValues(t *testing.T) {
 	}
 	if info.BuildDate != "release-date" {
 		t.Fatalf("expected injected build date to win, got %q", info.BuildDate)
+	}
+	if info.Modified {
+		t.Fatal("expected clean build flag")
+	}
+}
+
+func TestInfoStringOmitsUnknownFieldsAndShortensCommit(t *testing.T) {
+	info := Info{
+		Version:   "v1.2.3",
+		Commit:    "0123456789abcdef",
+		BuildDate: defaultBuildDate,
+		GoVersion: "go1.test",
+		Modified:  true,
+	}
+	got := info.String()
+	want := "version=v1.2.3 commit=0123456789ab dirty=true go=go1.test"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
 	}
 }
