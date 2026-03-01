@@ -11,6 +11,12 @@ var (
 	BuildDate = "unknown"
 )
 
+const (
+	defaultVersion   = "0.0.0"
+	defaultCommit    = "unknown"
+	defaultBuildDate = "unknown"
+)
+
 type Info struct {
 	Version   string
 	Commit    string
@@ -19,22 +25,33 @@ type Info struct {
 }
 
 func Current() Info {
+	var buildInfo *debug.BuildInfo
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		buildInfo = bi
+	}
+	return currentFromBuildInfo(buildInfo)
+}
+
+func currentFromBuildInfo(buildInfo *debug.BuildInfo) Info {
 	info := Info{
 		Version:   Version,
 		Commit:    Commit,
 		BuildDate: BuildDate,
 		GoVersion: "unknown",
 	}
-	if buildInfo, ok := debug.ReadBuildInfo(); ok {
+	if buildInfo != nil {
 		info.GoVersion = buildInfo.GoVersion
+		if info.Version == defaultVersion && buildInfo.Main.Version != "" && buildInfo.Main.Version != "(devel)" {
+			info.Version = buildInfo.Main.Version
+		}
 		for _, setting := range buildInfo.Settings {
 			switch setting.Key {
 			case "vcs.revision":
-				if info.Commit == "unknown" && setting.Value != "" {
+				if info.Commit == defaultCommit && setting.Value != "" {
 					info.Commit = setting.Value
 				}
 			case "vcs.time":
-				if info.BuildDate == "unknown" && setting.Value != "" {
+				if info.BuildDate == defaultBuildDate && setting.Value != "" {
 					info.BuildDate = setting.Value
 				}
 			}
