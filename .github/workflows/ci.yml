@@ -75,7 +75,7 @@ jobs:
           cache: true
 
       - name: Install actionlint
-        run: go install github.com/rhysd/actionlint/cmd/actionlint@latest
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
 
       - name: Lint workflows
         shell: bash
@@ -217,7 +217,7 @@ jobs:
           cache: true
 
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
 
       - name: Run govulncheck
         run: govulncheck ./...
@@ -294,67 +294,3 @@ jobs:
             rm -rf "${STAGE_DIR}"
           done
 
-
-  release-binaries:
-    name: Release Binaries
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    needs:
-      - lint-and-static
-      - test
-      - bypass-suite
-      - race-and-smoke
-      - vulnerability-scan
-      - docker-build
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: true
-
-      - name: Build release archives
-        shell: bash
-        run: |
-          set -euo pipefail
-          ROOT_DIR="${PWD}"
-          mkdir -p dist
-          VERSION="${GITHUB_REF_NAME}"
-          COMMIT="${GITHUB_SHA::12}"
-          BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          : > dist/nomos-checksums.txt
-          for target in \
-            "linux amd64 tar.gz" \
-            "linux arm64 tar.gz" \
-            "darwin amd64 tar.gz" \
-            "darwin arm64 tar.gz" \
-            "windows amd64 zip" \
-            "windows arm64 zip"; do
-            read -r GOOS_TARGET GOARCH_TARGET PACKAGE_FORMAT <<<"${target}"
-            STAGE_DIR="$(mktemp -d)"
-            BIN_NAME="nomos"
-            if [[ "${GOOS_TARGET}" == "windows" ]]; then
-              BIN_NAME="nomos.exe"
-            fi
-            GOOS="${GOOS_TARGET}" GOARCH="${GOARCH_TARGET}" \
-              go build -ldflags "-X github.com/safe-agentic-world/nomos/internal/version.Version=${VERSION} -X github.com/safe-agentic-world/nomos/internal/version.Commit=${COMMIT} -X github.com/safe-agentic-world/nomos/internal/version.BuildDate=${BUILD_DATE}" \
-              -o "${STAGE_DIR}/${BIN_NAME}" ./cmd/nomos
-            OUT="dist/nomos-${GOOS_TARGET}-${GOARCH_TARGET}.${PACKAGE_FORMAT}"
-            if [[ "${PACKAGE_FORMAT}" == "zip" ]]; then
-              (cd "${STAGE_DIR}" && zip -q "${ROOT_DIR}/${OUT}" "${BIN_NAME}")
-            else
-              tar -C "${STAGE_DIR}" -czf "${OUT}" "${BIN_NAME}"
-            fi
-            (cd dist && sha256sum "nomos-${GOOS_TARGET}-${GOARCH_TARGET}.${PACKAGE_FORMAT}") >> dist/nomos-checksums.txt
-            rm -rf "${STAGE_DIR}"
-          done
-
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: nomos-release-binaries
-          path: dist/*
