@@ -1,8 +1,10 @@
 # Policy Language (v1)
 
-Nomos policy bundles are JSON files with deterministic, deny-wins evaluation.
+Nomos policy bundles may be authored in JSON or YAML, but Nomos evaluates them through the same deterministic typed representation with deny-wins semantics.
 
 ## Bundle Format
+
+JSON:
 
 ```json
 {
@@ -22,6 +24,32 @@ Nomos policy bundles are JSON files with deterministic, deny-wins evaluation.
   ]
 }
 ```
+
+YAML (equivalent):
+
+```yaml
+version: v1
+rules:
+  - id: allow-readme
+    action_type: fs.read
+    resource: file://workspace/README.md
+    decision: ALLOW
+    principals: [system]
+    agents: [nomos]
+    environments: [dev]
+    risk_flags: [risk.net]
+    obligations: {}
+```
+
+## YAML Support
+
+- `.json` bundles keep the existing typed JSON decode path.
+- `.yaml` and `.yml` bundles are convenience input formats only.
+- YAML is decoded into the same typed Go structs used by JSON decoding.
+- Unknown YAML fields are rejected.
+- Duplicate YAML keys are rejected deterministically.
+- YAML source bytes are not hashed directly.
+- Bundle identity is computed after the typed bundle is converted into canonical JSON, so equivalent JSON and YAML bundles produce the same `policy_bundle_hash`.
 
 ## Matching Semantics
 

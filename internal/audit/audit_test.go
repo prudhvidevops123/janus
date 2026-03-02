@@ -115,6 +115,34 @@ func TestMultiSinkIncludesStdoutAndSQLite(t *testing.T) {
 	}
 }
 
+func TestStderrSinkWritesJSONL(t *testing.T) {
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stderr = w
+	defer func() {
+		_ = w.Close()
+		os.Stderr = old
+		_ = r.Close()
+	}()
+
+	writer, err := NewWriter("stderr", redact.DefaultRedactor())
+	if err != nil {
+		t.Fatalf("new writer: %v", err)
+	}
+	event := Event{Timestamp: time.Now().UTC(), EventType: "trace.start", TraceID: "t1", ActionID: "a1"}
+	if err := writer.WriteEvent(event); err != nil {
+		t.Fatalf("write event: %v", err)
+	}
+	_ = w.Close()
+	body, _ := io.ReadAll(r)
+	if !strings.Contains(string(body), "\"event_type\":\"trace.start\"") {
+		t.Fatalf("expected stderr jsonl output, got %s", string(body))
+	}
+}
+
 func TestChainHashesLinkedInSQLiteStream(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "audit.db")
 	writer, err := NewWriter("sqlite:"+path, redact.DefaultRedactor())

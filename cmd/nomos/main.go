@@ -7,7 +7,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/safe-agentic-world/nomos/internal/action"
 	"github.com/safe-agentic-world/nomos/internal/assurance"
+	"github.com/safe-agentic-world/nomos/internal/audit"
 	"github.com/safe-agentic-world/nomos/internal/doctor"
 	"github.com/safe-agentic-world/nomos/internal/gateway"
 	"github.com/safe-agentic-world/nomos/internal/identity"
@@ -29,7 +29,6 @@ import (
 )
 
 func main() {
-	log.SetFlags(0)
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
@@ -37,8 +36,7 @@ func main() {
 
 	switch os.Args[1] {
 	case "version":
-		info := version.Current()
-		fmt.Println(info.String())
+		fmt.Println(versionOutput())
 	case "serve":
 		runServe(os.Args[2:])
 	case "mcp":
@@ -53,6 +51,10 @@ func main() {
 	}
 }
 
+func versionOutput() string {
+	return version.Current().String()
+}
+
 func runServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	fs.SetOutput(os.Stderr)
@@ -62,36 +64,38 @@ func runServe(args []string) {
 	fs.StringVar(&configPath, "c", "", "path to config json")
 	fs.StringVar(&policyBundle, "policy-bundle", "", "path to policy bundle")
 	fs.StringVar(&policyBundle, "p", "", "path to policy bundle")
-	fs.Usage = func() { _, _ = io.WriteString(fs.Output(), serveHelpText()) }
+	fs.Usage = func() { writeHelpText(fs.Output(), serveHelpText()) }
 	fs.Parse(args)
 
 	resolved, err := resolveServeInvocation(configPath, policyBundle, os.Getenv)
 	if err != nil {
-		log.Fatal(err)
+		cliFatal(err.Error())
 	}
 
 	cfg, err := gateway.LoadConfig(resolved.ConfigPath, os.Getenv, resolved.PolicyBundle)
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		cliFatalf("load config: %v", err)
 	}
 
 	gw, err := gateway.New(cfg)
 	if err != nil {
-		log.Fatalf("init gateway: %v", err)
+		cliFatalf("init gateway: %v", err)
 	}
 
-	log.Printf("nomos gateway listening on %s (%s)", cfg.Gateway.Listen, cfg.Gateway.Transport)
+	cliSuccessf("gateway listening on %s (%s)", cfg.Gateway.Listen, cfg.Gateway.Transport)
 	if err := gw.Start(); err != nil {
-		log.Fatalf("gateway start: %v", err)
+		cliFatalf("gateway start: %v", err)
 	}
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	<-stop
+	cliWarn("shutdown signal received, stopping gateway")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := gw.Shutdown(shutdownCtx); err != nil {
-		log.Fatalf("gateway shutdown: %v", err)
+		cliFatalf("gateway shutdown: %v", err)
 	}
+	cliSuccess("gateway stopped cleanly")
 }
 
 func runMCP(args []string) {
@@ -111,12 +115,12 @@ func runMCP(args []string) {
 	fs.BoolVar(&quiet, "quiet", false, "suppress startup banner and non-error logs")
 	fs.BoolVar(&quiet, "q", false, "suppress startup banner and non-error logs")
 	fs.StringVar(&logFormat, "log-format", "text", "mcp log format: text|json")
-	fs.Usage = func() { _, _ = io.WriteString(fs.Output(), mcpHelpText()) }
+	fs.Usage = func() { writeHelpText(fs.Output(), mcpHelpText()) }
 	fs.Parse(args)
 
 	resolved, err := resolveMCPInvocation(configPath, policyBundle, logLevel, quiet, os.Getenv)
 	if err != nil {
-		log.Fatal(err)
+		cliFatal(err.Error())
 	}
 	runtimeOptions, err := mcp.ParseRuntimeOptions(mcp.RuntimeOptions{
 		LogLevel:  resolved.LogLevel,
@@ -125,28 +129,42 @@ func runMCP(args []string) {
 		ErrWriter: os.Stderr,
 	})
 	if err != nil {
-		log.Fatalf("invalid mcp runtime options: %v", err)
+		cliFatalf("invalid mcp runtime options: %v", err)
 	}
 	cfg, err := gateway.LoadConfig(resolved.ConfigPath, os.Getenv, resolved.PolicyBundle)
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		cliFatalf("load config: %v", err)
+	}
+	if mcpSinkRewritesStdout(cfg.Audit.Sink) {
+		cliWarn("rewriting audit sink stdout -> stderr for MCP protocol safety")
+	}
+	recorder, err := buildProtocolSafeMCPRecorder(cfg)
+	if err != nil {
+		cliFatalf("init mcp audit recorder: %v", err)
+	}
+	if closer, ok := recorder.(io.Closer); ok {
+		defer func() {
+			_ = closer.Close()
+		}()
 	}
 	if strings.EqualFold(resolved.LogLevelSource, "env") && strings.EqualFold(resolved.LogLevel, "debug") {
-		log.Printf("mcp log-level resolved from env NOMOS_LOG_LEVEL")
+		cliInfo("log-level resolved from env NOMOS_LOG_LEVEL")
 	}
 	id := identity.VerifiedIdentity{
 		Principal:   cfg.Identity.Principal,
 		Agent:       cfg.Identity.Agent,
 		Environment: cfg.Identity.Environment,
 	}
-	if err := mcp.RunStdioWithRuntimeOptions(cfg.Policy.BundlePath, id, cfg.Executor.WorkspaceRoot, cfg.Executor.MaxOutputBytes, cfg.Executor.MaxOutputLines, cfg.Approvals.Enabled, cfg.Executor.SandboxEnabled, cfg.Executor.SandboxProfile, runtimeOptions); err != nil {
-		log.Fatalf("mcp server error: %v", err)
+	assuranceLevel := assurance.Derive(cfg.Runtime.DeploymentMode, cfg.Runtime.StrongGuarantee)
+	cliSuccessf("MCP stdio server ready (assurance=%s)", assuranceLevel)
+	if err := mcp.RunStdioWithRuntimeOptionsAndRecorder(cfg.Policy.BundlePath, id, cfg.Executor.WorkspaceRoot, cfg.Executor.MaxOutputBytes, cfg.Executor.MaxOutputLines, cfg.Approvals.Enabled, cfg.Executor.SandboxEnabled, cfg.Executor.SandboxProfile, runtimeOptions, recorder, assuranceLevel); err != nil {
+		cliFatalf("mcp server error: %v", err)
 	}
 }
 
 func runPolicy(args []string) {
 	if len(args) == 0 {
-		log.Fatal("policy command required: test|explain")
+		cliFatal("policy command required: test|explain")
 	}
 	switch args[0] {
 	case "test":
@@ -154,28 +172,107 @@ func runPolicy(args []string) {
 	case "explain":
 		runPolicyExplain(args[1:])
 	default:
-		log.Fatal("policy command required: test|explain")
+		cliFatal("policy command required: test|explain")
 	}
 }
 
+const (
+	policyResultValidationError = "VALIDATION_ERROR"
+	policyResultNormError       = "NORMALIZATION_ERROR"
+)
+
+type classifiedPolicyError struct {
+	code string
+	err  error
+}
+
+func (e *classifiedPolicyError) Error() string {
+	if e == nil || e.err == nil {
+		return ""
+	}
+	return e.err.Error()
+}
+
+func (e *classifiedPolicyError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func policyErrorCode(err error) string {
+	var classified *classifiedPolicyError
+	if errors.As(err, &classified) && classified != nil {
+		return classified.code
+	}
+	return ""
+}
+
+func classifyBundleLoadError(err error) string {
+	if err == nil {
+		return ""
+	}
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "canonicalize bundle"):
+		return policyResultNormError
+	default:
+		return policyResultValidationError
+	}
+}
+
+func wrapPolicyError(code, operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &classifiedPolicyError{
+		code: code,
+		err:  fmt.Errorf("%s: %w", operation, err),
+	}
+}
+
+func logPolicyCommandError(err error) {
+	code := policyErrorCode(err)
+	if code == "" {
+		cliFatal(err.Error())
+	}
+	cliFatalf("%s: %v", code, err)
+}
+
 func runPolicyTest(args []string) {
+	summary, err := executePolicyTest(args, os.Stdout)
+	if err != nil {
+		logPolicyCommandError(err)
+	}
+	cliSuccessf("policy test completed: decision=%s matched_rules=%d bundle=%s", summary.Decision, summary.MatchedRuleCount, summary.PolicyBundleHash)
+}
+
+type policyCommandSummary struct {
+	Decision         string
+	ReasonCode       string
+	PolicyBundleHash string
+	MatchedRuleCount int
+	AssuranceLevel   string
+}
+
+func executePolicyTest(args []string, stdout io.Writer) (policyCommandSummary, error) {
 	actionPath, bundlePath := parsePolicyFlags("test", args)
 	actionData, err := os.ReadFile(actionPath)
 	if err != nil {
-		log.Fatalf("read action: %v", err)
+		return policyCommandSummary{}, wrapPolicyError(policyResultValidationError, "read action", err)
 	}
 	act, err := action.DecodeAction(actionData)
 	if err != nil {
-		log.Fatalf("decode action: %v", err)
+		return policyCommandSummary{}, wrapPolicyError(policyResultValidationError, "decode action", err)
 	}
 	bundle, err := policy.LoadBundle(bundlePath)
 	if err != nil {
-		log.Fatalf("load bundle: %v", err)
+		return policyCommandSummary{}, wrapPolicyError(classifyBundleLoadError(err), "load bundle", err)
 	}
 	engine := policy.NewEngine(bundle)
 	normalized, err := normalize.Action(act)
 	if err != nil {
-		log.Fatalf("normalize action: %v", err)
+		return policyCommandSummary{}, wrapPolicyError(policyResultNormError, "normalize action", err)
 	}
 	decision := engine.Evaluate(normalized)
 	payload := map[string]any{
@@ -184,38 +281,63 @@ func runPolicyTest(args []string) {
 		"matched_rule_ids":   decision.MatchedRuleIDs,
 		"policy_bundle_hash": decision.PolicyBundleHash,
 	}
-	enc := json.NewEncoder(os.Stdout)
-	_ = enc.Encode(payload)
+	enc := json.NewEncoder(stdout)
+	if err := enc.Encode(payload); err != nil {
+		return policyCommandSummary{}, err
+	}
+	return policyCommandSummary{
+		Decision:         decision.Decision,
+		ReasonCode:       decision.ReasonCode,
+		PolicyBundleHash: decision.PolicyBundleHash,
+		MatchedRuleCount: len(decision.MatchedRuleIDs),
+	}, nil
 }
 
 func runPolicyExplain(args []string) {
+	summary, err := executePolicyExplain(args, os.Stdout, os.Getenv)
+	if err != nil {
+		logPolicyCommandError(err)
+	}
+	cliSuccessf("policy explain completed: decision=%s reason=%s matched_rules=%d assurance=%s", summary.Decision, summary.ReasonCode, summary.MatchedRuleCount, summary.AssuranceLevel)
+}
+
+func executePolicyExplain(args []string, stdout io.Writer, getenv func(string) string) (policyCommandSummary, error) {
 	actionPath, bundlePath, configPath := parsePolicyExplainFlags(args)
 	actionData, err := os.ReadFile(actionPath)
 	if err != nil {
-		log.Fatalf("read action: %v", err)
+		return policyCommandSummary{}, wrapPolicyError(policyResultValidationError, "read action", err)
 	}
 	act, err := action.DecodeAction(actionData)
 	if err != nil {
-		log.Fatalf("decode action: %v", err)
+		return policyCommandSummary{}, wrapPolicyError(policyResultValidationError, "decode action", err)
 	}
 	bundle, err := policy.LoadBundle(bundlePath)
 	if err != nil {
-		log.Fatalf("load bundle: %v", err)
+		return policyCommandSummary{}, wrapPolicyError(classifyBundleLoadError(err), "load bundle", err)
 	}
 	engine := policy.NewEngine(bundle)
 	normalized, err := normalize.Action(act)
 	if err != nil {
-		log.Fatalf("normalize action: %v", err)
+		return policyCommandSummary{}, wrapPolicyError(policyResultNormError, "normalize action", err)
 	}
 	explanation := engine.Explain(normalized)
-	settings, err := deriveExplainSettings(configPath, bundlePath, os.Getenv)
+	settings, err := deriveExplainSettings(configPath, bundlePath, getenv)
 	if err != nil {
-		log.Fatalf("derive explain settings: %v", err)
+		return policyCommandSummary{}, wrapPolicyError(policyResultValidationError, "derive explain settings", err)
 	}
 	payload := buildPolicyExplainPayload(explanation, normalized, settings)
-	enc := json.NewEncoder(os.Stdout)
+	enc := json.NewEncoder(stdout)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(payload)
+	if err := enc.Encode(payload); err != nil {
+		return policyCommandSummary{}, err
+	}
+	return policyCommandSummary{
+		Decision:         explanation.Decision.Decision,
+		ReasonCode:       explanation.Decision.ReasonCode,
+		PolicyBundleHash: explanation.Decision.PolicyBundleHash,
+		MatchedRuleCount: len(explanation.Decision.MatchedRuleIDs),
+		AssuranceLevel:   settings.AssuranceLevel,
+	}, nil
 }
 
 type explainSettings struct {
@@ -255,7 +377,7 @@ func parsePolicyExplainFlags(args []string) (string, string, string) {
 	configPath := fs.String("config", "", "path to config json")
 	fs.Parse(args)
 	if *actionPath == "" || *bundlePath == "" {
-		log.Fatal("both --action and --bundle are required")
+		cliFatal("both --action and --bundle are required")
 	}
 	return *actionPath, *bundlePath, *configPath
 }
@@ -386,7 +508,7 @@ func parsePolicyFlags(name string, args []string) (string, string) {
 	bundlePath := fs.String("bundle", "", "path to policy bundle")
 	fs.Parse(args)
 	if *actionPath == "" || *bundlePath == "" {
-		log.Fatal("both --action and --bundle are required")
+		cliFatal("both --action and --bundle are required")
 	}
 	return *actionPath, *bundlePath
 }
@@ -400,7 +522,7 @@ func mustJSON(value any) string {
 }
 
 func usage() {
-	_, _ = io.WriteString(os.Stderr, rootHelpText())
+	writeHelpText(os.Stderr, rootHelpText())
 }
 
 func runDoctorCommand(args []string, stdout io.Writer, stderr io.Writer, getenv func(string) string) int {
@@ -414,7 +536,7 @@ func runDoctorCommand(args []string, stdout io.Writer, stderr io.Writer, getenv 
 	fs.StringVar(&policyBundle, "policy-bundle", "", "path to policy bundle")
 	fs.StringVar(&policyBundle, "p", "", "path to policy bundle")
 	fs.StringVar(&format, "format", "text", "doctor output format: text|json")
-	fs.Usage = func() { _, _ = io.WriteString(fs.Output(), doctorHelpText()) }
+	fs.Usage = func() { writeHelpText(fs.Output(), doctorHelpText()) }
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -450,11 +572,13 @@ func runDoctorCommand(args []string, stdout io.Writer, stderr io.Writer, getenv 
 		}
 		writeRedactedLine(stdout, string(data))
 	} else {
-		writeRedactedLine(stdout, doctor.HumanSummary(report))
+		writeRedactedLine(stdout, decorateDoctorSummary(stdout, report))
 	}
 	if report.OverallStatus == "READY" {
+		writeStatusLine(stderr, "OK", ansiGreen, fmt.Sprintf("doctor completed: status=%s checks=%d bundle=%s", report.OverallStatus, len(report.Checks), report.PolicyBundleHash))
 		return 0
 	}
+	writeStatusLine(stderr, "WARN", ansiYellow, fmt.Sprintf("doctor completed: status=%s checks=%d", report.OverallStatus, len(report.Checks)))
 	return 1
 }
 
@@ -547,6 +671,43 @@ func resolveAbsolutePath(path string) (string, error) {
 	return filepath.Clean(abs), nil
 }
 
+func buildProtocolSafeMCPRecorder(cfg gateway.Config) (audit.Recorder, error) {
+	redactor, err := redact.NewRedactor(cfg.Redaction.Patterns)
+	if err != nil {
+		return nil, err
+	}
+	return audit.NewWriter(protocolSafeMCPSink(cfg.Audit.Sink), redactor)
+}
+
+func protocolSafeMCPSink(sink string) string {
+	parts := strings.Split(strings.TrimSpace(sink), ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed == "" {
+			continue
+		}
+		if trimmed == "stdout" {
+			out = append(out, "stderr")
+			continue
+		}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return "stderr"
+	}
+	return strings.Join(out, ",")
+}
+
+func mcpSinkRewritesStdout(sink string) bool {
+	for _, part := range strings.Split(strings.TrimSpace(sink), ",") {
+		if strings.EqualFold(strings.TrimSpace(part), "stdout") {
+			return true
+		}
+	}
+	return false
+}
+
 func rootHelpText() string {
 	return "nomos commands:\n" +
 		"  version    print build metadata\n" +
@@ -592,4 +753,143 @@ func writeRedactedLine(w io.Writer, value string) {
 		redacted += "\n"
 	}
 	_, _ = io.WriteString(w, redacted)
+}
+
+func writeHelpText(w io.Writer, text string) {
+	_, _ = io.WriteString(w, decorateHelpText(w, text))
+}
+
+const (
+	ansiReset  = "\x1b[0m"
+	ansiBold   = "\x1b[1m"
+	ansiRed    = "\x1b[31m"
+	ansiGreen  = "\x1b[32m"
+	ansiYellow = "\x1b[33m"
+	ansiCyan   = "\x1b[36m"
+)
+
+func cliInfo(message string) {
+	writeStatusLine(os.Stderr, "INFO", ansiCyan, message)
+}
+
+func cliInfof(format string, args ...any) {
+	cliInfo(fmt.Sprintf(format, args...))
+}
+
+func cliSuccess(message string) {
+	writeStatusLine(os.Stderr, "OK", ansiGreen, message)
+}
+
+func cliSuccessf(format string, args ...any) {
+	cliSuccess(fmt.Sprintf(format, args...))
+}
+
+func cliWarn(message string) {
+	writeStatusLine(os.Stderr, "WARN", ansiYellow, message)
+}
+
+func cliFatal(message string) {
+	writeStatusLine(os.Stderr, "ERROR", ansiRed, message)
+	os.Exit(1)
+}
+
+func cliFatalf(format string, args ...any) {
+	cliFatal(fmt.Sprintf(format, args...))
+}
+
+func writeStatusLine(w io.Writer, label, color, message string) {
+	prefix := "[" + label + "]"
+	if supportsColor(w) {
+		prefix = colorize(color, ansiBold+prefix+ansiReset)
+	}
+	writeRedactedLine(w, prefix+" "+message)
+}
+
+func decorateDoctorSummary(w io.Writer, report doctor.Report) string {
+	summary := doctor.HumanSummary(report)
+	if !supportsColor(w) {
+		return summary
+	}
+	replacements := []struct {
+		old string
+		new string
+	}{
+		{"Nomos Doctor Report", colorize(ansiCyan, ansiBold+"Nomos Doctor Report"+ansiReset)},
+		{"[PASS]", colorize(ansiGreen, ansiBold+"[PASS]"+ansiReset)},
+		{"[FAIL]", colorize(ansiRed, ansiBold+"[FAIL]"+ansiReset)},
+	}
+	for _, item := range replacements {
+		summary = strings.ReplaceAll(summary, item.old, item.new)
+	}
+	if report.OverallStatus == "READY" {
+		summary = strings.Replace(summary, "Result: READY", "Result: "+colorize(ansiGreen, ansiBold+"READY"+ansiReset), 1)
+		return summary
+	}
+	summary = strings.Replace(summary, "Result: NOT_READY", "Result: "+colorize(ansiRed, ansiBold+"NOT_READY"+ansiReset), 1)
+	return summary
+}
+
+func decorateHelpText(w io.Writer, text string) string {
+	if !supportsColor(w) {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(trimmed, "usage:"):
+			lines[i] = colorize(ansiCyan, ansiBold+line+ansiReset)
+		case trimmed == "example:":
+			lines[i] = colorize(ansiYellow, ansiBold+line+ansiReset)
+		case trimmed == "nomos commands:":
+			lines[i] = colorize(ansiCyan, ansiBold+line+ansiReset)
+		case strings.HasPrefix(line, "  nomos "):
+			lines[i] = colorize(ansiGreen, line)
+		case strings.HasPrefix(line, "  version") || strings.HasPrefix(line, "  serve") || strings.HasPrefix(line, "  mcp") || strings.HasPrefix(line, "  policy") || strings.HasPrefix(line, "  doctor"):
+			fields := strings.Fields(line)
+			if len(fields) > 0 {
+				lines[i] = strings.Replace(line, fields[0], colorize(ansiGreen, fields[0]), 1)
+			}
+		case strings.HasPrefix(line, "  -") || strings.HasPrefix(line, "      --"):
+			lines[i] = decorateFlagLine(line)
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func decorateFlagLine(line string) string {
+	start := 0
+	for start < len(line) && line[start] == ' ' {
+		start++
+	}
+	end := start
+	for end < len(line) && line[end] != ' ' {
+		end++
+	}
+	if end <= start {
+		return line
+	}
+	return line[:start] + colorize(ansiGreen, line[start:end]) + line[end:]
+}
+
+func supportsColor(w io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("TERM")), "dumb") {
+		return false
+	}
+	file, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
+func colorize(color, value string) string {
+	return color + value + ansiReset
 }
