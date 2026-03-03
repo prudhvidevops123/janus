@@ -48,6 +48,7 @@ $NomosExe = Join-Path $BinDir "nomos.exe"
 $ConfigCodex = Join-Path $Repo "config.codex.json"
 $ConfigAll = Join-Path $Repo "config.all-fields.example.json"
 $SafeDevYaml = Join-Path $Repo "policies\safe-dev.yaml"
+$SafeDevHardenedYaml = Join-Path $Repo "policies\safe-dev-hardened.yaml"
 $SafeDevJson = Join-Path $Repo "policies\safe-dev.json"
 $MinimalJson = Join-Path $Repo "policies\minimal.json"
 $AllFieldsYaml = Join-Path $Repo "policies\all-fields.example.yaml"
@@ -305,10 +306,12 @@ Expected:
 
 ## MCP With Claude Code
 
-The commands below use the current Claude Code MCP syntax from the Claude Code MCP docs:
+The commands below use the current Claude Code MCP syntax from the Claude Code MCP docs.
 
-- local stdio syntax: `claude mcp add --transport stdio [options] <name> -- <command> [args...]`
-- use `--scope project` if you want the server definition written to the project `.mcp.json`
+Important:
+
+- if you open a new PowerShell session, variables like `$NomosExe`, `$ConfigCodex`, and `$SafeDevYaml` from the earlier setup section will not exist unless you define them again
+- for the Claude MCP registration step, prefer a self-contained command with explicit paths so you do not accidentally register a broken server command
 
 Important Windows note:
 
@@ -320,7 +323,7 @@ Use absolute paths so the MCP registration works from any directory.
 ### Scenario 16: Register Nomos as a Claude Code MCP server
 
 ```powershell
-claude mcp add --transport stdio --scope project nomos-local -- $NomosExe mcp -c $ConfigCodex -p $SafeDevYaml
+claude mcp add --transport stdio --scope project nomos-local -- "C:\Users\prudh\repos\safe-agentic-world\nomos\bin\nomos.exe" mcp -c "C:\Users\prudh\repos\safe-agentic-world\nomos\config.codex.json" -p "C:\Users\prudh\repos\safe-agentic-world\nomos\policies\safe-dev.yaml"
 ```
 
 Expected:
@@ -334,6 +337,8 @@ claude mcp add --transport stdio sample-npx-server -- cmd /c npx -y @some/packag
 ```
 
 Do not use that wrapper for the Nomos binary itself.
+
+If you want to use variables instead, make sure they are defined in the same PowerShell session before running `claude mcp add`.
 
 ### Scenario 17: Verify the MCP registration
 
@@ -365,6 +370,8 @@ Expected:
 
 - enabled tools should include `nomos.fs_read`, `nomos.fs_write`, and `nomos.apply_patch`
 - `nomos.exec` and `nomos.http_request` should not be enabled under `safe-dev`
+- response should include `assurance_level`
+- in unmanaged local testing, response should also include `mediation_notice`
 
 ### Scenario 19: MCP read allowed
 
@@ -402,7 +409,7 @@ Use nomos.fs_read to read file://workspace/../.env
 
 Expected:
 
-- denied
+- denied with `normalization_error`
 - no file content leaks
 
 ### Scenario 22: MCP write allowed
@@ -820,7 +827,7 @@ $BodyReplay = @"
   "resource": "url://api.example.com/v1/test",
   "params": { "method": "GET", "headers": {} },
   "trace_id": "approval_http_trace_2",
-  "context": { "extensions": { "approval_id": "$ApprovalId" } }
+  "context": { "extensions": { "approval": { "approval_id": "$ApprovalId" } } }
 }
 "@
 $SigReplay = New-NomosAgentSignature -Body $BodyReplay -Secret "dev-agent-secret"
@@ -1154,3 +1161,6 @@ Nomos is locally validated when all of the following are true:
 - leases are issued and secrets do not leak in output
 - gateway auth checks reject unsigned or malformed requests
 - traversal, unsupported schemes, and redirect edge cases fail closed
+
+Optional hardened local policy check:
+- repeat the Claude Code MCP scenarios with `policies\safe-dev-hardened.yaml` to confirm `.env`, `.pem`, `.key`, and `.py` reads are denied while Markdown reads remain allowed

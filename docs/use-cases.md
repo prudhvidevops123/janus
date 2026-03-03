@@ -59,12 +59,11 @@ GitHub / HTTP / Filesystem
 
 Nomos enforces:
 
-* Only `repo.apply_patch` allowed on `repo://org/service`
+* `repo.apply_patch` allowed only on the governed repository surface
 * `process.exec` limited to `["go", "test"]`
-* Network allowlist: only `api.github.com`
-* Max 20 actions per trace
+* `net.http_request` allowlisted to `api.github.com`
 * Output caps
-* PR open requires approval
+* Sensitive actions require approval
 * Secrets never returned to agent
 
 ### Result
@@ -103,13 +102,12 @@ Deployment:
 * Nomos runs with workload identity
 * K8s network policy enforces deny-by-default
 
-Nomos enforces:
+Nomos does not currently ship native `k8s.*` action types in v1. In this deployment shape, it mediates the control-plane boundary through current v1 primitives such as:
 
-* `k8s.scale` allowed only in `dev` namespace
-* No delete actions
-* Rate limit scaling events
-* Approvals required for production
-* Full audit with `policy_bundle_hash`
+* `net.http_request` to an internal control-plane API
+* strict network allowlists
+* approvals required for production changes
+* full audit with `policy_bundle_hash`
 
 Now you’ve turned an autonomous infra agent into:
 
@@ -140,7 +138,7 @@ Risk:
 
 Nomos governs:
 
-* `http.request` allowlisted to specific domains
+* `net.http_request` allowlisted to specific domains
 * `secrets.checkout` short TTL and bound to trace
 * `fs.write` limited to specific directories
 * Large IO flagged via risk flags
@@ -224,14 +222,14 @@ Let’s say a startup wants AI to automatically:
 You would:
 
 1. Deploy Nomos in CI
-2. Load `safe-dev` policy pack
+2. Load `safe-dev` or `safe-dev-hardened` policy pack
 3. Deny all exec by default
 4. Allow:
 
    * `fs.read`
    * `repo.apply_patch`
    * `process.exec` only for test commands
-   * `git.open_mr`
+   * `repo.validate_change_set` before PR creation
 5. Require approval for:
 
    * Large diffs
