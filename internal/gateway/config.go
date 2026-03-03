@@ -590,6 +590,7 @@ func resolveRelativePath(baseDir, value string) string {
 	if trimmed == "" {
 		return value
 	}
+	trimmed = normalizeConfigPathSeparators(trimmed)
 	if filepath.IsAbs(trimmed) {
 		return filepath.Clean(trimmed)
 	}
@@ -619,4 +620,12 @@ func resolveAuditSinkPaths(baseDir, sink string) string {
 		return sink
 	}
 	return strings.Join(out, ",")
+}
+
+func normalizeConfigPathSeparators(value string) string {
+	if value == "" {
+		return value
+	}
+	normalized := strings.ReplaceAll(value, "\\", "/")
+	return filepath.FromSlash(normalized)
 }

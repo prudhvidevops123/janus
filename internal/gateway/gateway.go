@@ -22,11 +22,11 @@ import (
 	"github.com/safe-agentic-world/nomos/internal/audit"
 	"github.com/safe-agentic-world/nomos/internal/executor"
 	"github.com/safe-agentic-world/nomos/internal/identity"
+	"github.com/safe-agentic-world/nomos/internal/normalize"
 	"github.com/safe-agentic-world/nomos/internal/policy"
 	"github.com/safe-agentic-world/nomos/internal/redact"
 	"github.com/safe-agentic-world/nomos/internal/service"
 	"github.com/safe-agentic-world/nomos/internal/version"
-	"github.com/safe-agentic-world/nomos/internal/normalize"
 )
 
 type Gateway struct {
