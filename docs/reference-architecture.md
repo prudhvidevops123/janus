@@ -1,6 +1,6 @@
 # Controlled Runtime Reference Architecture
 
-This document defines the reference architecture for a strong-guarantee Nomos deployment.
+This document defines the reference architecture for a strong-guarantee deployment of Nomos.
 
 ## Threat Assumptions
 
@@ -52,13 +52,45 @@ This document defines the reference architecture for a strong-guarantee Nomos de
 6. Audit:
    Denied and allowed actions are written to a durable audit sink.
 
+## Trust Assumptions vs. Enforced Properties
+
+### Environment-Enforced Properties
+
+These must be enforced by the runtime platform, not by Nomos alone:
+
+- direct agent egress is blocked except to approved destinations
+- agent workloads run as non-root
+- agent workloads do not receive direct secret mounts
+- agent workloads cannot use privileged container features to escape the boundary
+
+### Nomos-Enforced Properties
+
+These are enforced by Nomos once a request reaches the gateway:
+
+- deterministic normalization
+- deterministic policy evaluation
+- deny-by-default authorization
+- obligation enforcement inside the supported executor surfaces
+- output redaction
+- audit recording
+
+### Current Proof Boundary
+
+The current strong-guarantee validation surface in this repository is intentionally conservative:
+
+- deployment manifests express the required runtime constraints
+- `nomos doctor` validates strong-guarantee readiness signals
+- integration tests validate the reference manifest and Nomos-mediated behavior
+
+This is stronger than a documentation-only claim, but it is still scoped to the checked-in reference deployment and tests.
+
 ## Verifiable Signals
 
 The `nomos doctor` strong-guarantee mode validates conservative proxy signals for this architecture:
 
 - container sandbox profile
 - gateway mTLS
-- OIDC workload identity
+- workload identity verification (OIDC or SPIFFE, depending on deployment)
 - durable audit sink
 - deployment-bound environment (`ci`, `staging`, or `prod`)
 

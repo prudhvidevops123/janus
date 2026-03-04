@@ -24,7 +24,7 @@ This plan covers every implemented product surface in the current codebase:
 - transports: MCP stdio and HTTP
 - action types: `fs.read`, `fs.write`, `repo.apply_patch`, `process.exec`, `net.http_request`, `secrets.checkout`
 - policy bundle formats: JSON and YAML
-- auth modes: API key + agent HMAC by default, plus optional service HMAC and OIDC
+- auth modes: API key + agent HMAC by default, plus optional service HMAC, OIDC, and SPIFFE-backed workload identity in controlled runtimes
 - approvals: pending, approve, deny, replay with approval ID
 - audit sinks: stdout/stderr, optional sqlite
 - enforcement edges: deny-by-default, path traversal, sandbox requirement, allowlists, redirect policy, output caps, redaction
@@ -142,7 +142,7 @@ $ActionDeny = Join-Path $TmpDir "action-deny-other-file.json"
   "schema_version": "v1",
   "action_id": "manual_policy_deny_1",
   "action_type": "fs.read",
-  "resource": "file://workspace/TASKS.md",
+  "resource": "file://workspace/CHANGELOG.md",
   "params": {},
   "principal": "system",
   "agent": "nomos",
@@ -296,7 +296,7 @@ Expected:
 ### Scenario 15: Invalid format returns internal/usage error
 
 ```powershell
-& $NomosExe doctor -c $ConfigCodex --format yaml
+& $NomosExe doctor -c $ConfigCodex --format invalid
 ```
 
 Expected:
@@ -392,7 +392,7 @@ Expected:
 In Claude Code:
 
 ```text
-Use nomos.fs_read to read file://workspace/TASKS.md and summarize the first section.
+Use nomos.fs_read to read file://workspace/CHANGELOG.md and summarize the first section.
 ```
 
 Expected:
