@@ -276,7 +276,7 @@ func repoRoot(t *testing.T) string {
 		t.Fatalf("getwd: %v", err)
 	}
 	root := filepath.Clean(filepath.Join(dir, "..", ".."))
-	if _, err := os.Stat(filepath.Join(root, "TASKS.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		t.Fatalf("resolve repo root: %v", err)
 	}
 	return root

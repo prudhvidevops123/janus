@@ -113,12 +113,12 @@ codex mcp add nomos -- `
 In Codex, run:
 
 - Allowed: `Use nomos.fs_read to read file://workspace/README.md`
-- Denied: `Use nomos.fs_read to read file://workspace/TASKS.md`
+- Denied: `Use nomos.fs_read to read file://workspace/CHANGELOG.md`
 
 You should see:
 
 - `README.md` allowed (capped output)
-- `TASKS.md` denied under the minimal bundle (structured deny response)
+- `CHANGELOG.md` denied under the minimal bundle (structured deny response)
 - audit events emitted for both
 - redaction path executed before returning output
 

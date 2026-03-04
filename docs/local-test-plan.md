@@ -142,7 +142,7 @@ $ActionDeny = Join-Path $TmpDir "action-deny-other-file.json"
   "schema_version": "v1",
   "action_id": "manual_policy_deny_1",
   "action_type": "fs.read",
-  "resource": "file://workspace/TASKS.md",
+  "resource": "file://workspace/CHANGELOG.md",
   "params": {},
   "principal": "system",
   "agent": "nomos",
@@ -392,7 +392,7 @@ Expected:
 In Claude Code:
 
 ```text
-Use nomos.fs_read to read file://workspace/TASKS.md and summarize the first section.
+Use nomos.fs_read to read file://workspace/CHANGELOG.md and summarize the first section.
 ```
 
 Expected:
