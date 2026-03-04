@@ -7,16 +7,14 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -o /out/nomos ./cmd/nomos
 
+FROM openpolicyagent/opa:latest-static AS runtime-opa
+WORKDIR /app
+COPY --from=builder /out/nomos /app/nomos
+USER 65532:65532
+ENTRYPOINT ["/app/nomos"]
+
 FROM gcr.io/distroless/static:nonroot AS runtime
 WORKDIR /app
 COPY --from=builder /out/nomos /app/nomos
 USER nonroot:nonroot
-ENTRYPOINT ["/app/nomos"]
-
-FROM openpolicyagent/opa:latest-static AS runtime-opa
-USER root
-WORKDIR /app
-COPY --from=builder /out/nomos /app/nomos
-RUN chmod +x /app/nomos
-USER 65532:65532
 ENTRYPOINT ["/app/nomos"]
