@@ -69,6 +69,20 @@ go install github.com/safe-agentic-world/nomos/cmd/nomos@latest
 curl -fsSL https://raw.githubusercontent.com/safe-agentic-world/nomos/main/install.sh | sh
 ```
 
+### Homebrew (macOS and Linux)
+
+```bash
+brew tap safe-agentic-world/packages-nomos
+brew install nomos
+```
+
+### Scoop (Windows)
+
+```powershell
+scoop bucket add packages-nomos https://github.com/safe-agentic-world/packages-nomos
+scoop install nomos
+```
+
 ## Run Nomos
 
 ### HTTP mode
