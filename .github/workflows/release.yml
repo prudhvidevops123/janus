@@ -133,7 +133,7 @@ jobs:
           generate_release_notes: true
 
       - name: Update Homebrew and Scoop manifests
-        if: ${{ github.event_name == 'repository_dispatch' && secrets.PACKAGES_REPO_TOKEN != '' }}
+        if: ${{ github.event_name == 'repository_dispatch' }}
         env:
           PACKAGES_REPO_TOKEN: ${{ secrets.PACKAGES_REPO_TOKEN }}
           PACKAGES_REPO: safe-agentic-world/packages-nomos
