@@ -103,6 +103,7 @@ func TestCompletedAuditEventFields(t *testing.T) {
 
 func TestCompletedAuditExecMetadataIncludesEnforcementMode(t *testing.T) {
 	dir := t.TempDir()
+	argv, _, allowPattern := benignExecFixture()
 	bundle := policy.Bundle{
 		Version: "v1",
 		Rules: []policy.Rule{
@@ -112,7 +113,7 @@ func TestCompletedAuditExecMetadataIncludesEnforcementMode(t *testing.T) {
 				Resource:   "file://workspace/",
 				Decision:   policy.DecisionAllow,
 				ExecMatch: &policy.ExecMatch{
-					ArgvPatterns: [][]string{{"cmd", "/c", "echo", "*"}},
+					ArgvPatterns: [][]string{allowPattern},
 				},
 				Obligations: map[string]any{
 					"sandbox_mode": "local",
@@ -134,7 +135,7 @@ func TestCompletedAuditExecMetadataIncludesEnforcementMode(t *testing.T) {
 		ActionID:      "act-audit-exec",
 		ActionType:    "process.exec",
 		Resource:      "file://workspace/",
-		Params:        []byte(`{"argv":["cmd","/c","echo","hi"],"cwd":"","env_allowlist_keys":[]}`),
+		Params:        mustExecParams(t, argv),
 		TraceID:       "trace-audit-exec",
 		Context:       action.Context{Extensions: map[string]json.RawMessage{}},
 	}, identity.VerifiedIdentity{Principal: "system", Agent: "nomos", Environment: "dev"})

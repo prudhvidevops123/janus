@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -211,6 +212,7 @@ func TestServiceHTTPAllowlist(t *testing.T) {
 
 func TestServiceExecUsesPolicyAsAuthorizationSourceWithoutLegacyAllowlist(t *testing.T) {
 	dir := t.TempDir()
+	argv, _, allowPattern := benignExecFixture()
 	bundle := policy.Bundle{
 		Version: "v1",
 		Rules: []policy.Rule{
@@ -223,7 +225,7 @@ func TestServiceExecUsesPolicyAsAuthorizationSourceWithoutLegacyAllowlist(t *tes
 				Agents:       []string{"nomos"},
 				Environments: []string{"dev"},
 				ExecMatch: &policy.ExecMatch{
-					ArgvPatterns: [][]string{{"cmd", "/c", "echo", "*"}},
+					ArgvPatterns: [][]string{allowPattern},
 				},
 				Obligations: map[string]any{
 					"sandbox_mode": "local",
@@ -246,7 +248,7 @@ func TestServiceExecUsesPolicyAsAuthorizationSourceWithoutLegacyAllowlist(t *tes
 		ActionID:      "act4",
 		ActionType:    "process.exec",
 		Resource:      "file://workspace/",
-		Params:        []byte(`{"argv":["cmd","/c","echo","hi"],"cwd":"","env_allowlist_keys":[]}`),
+		Params:        mustExecParams(t, argv),
 		TraceID:       "trace4",
 		Context:       action.Context{Extensions: map[string]json.RawMessage{}},
 	}, identity.VerifiedIdentity{
@@ -274,6 +276,7 @@ func TestServiceExecUsesPolicyAsAuthorizationSourceWithoutLegacyAllowlist(t *tes
 
 func TestServiceExecLegacyAllowlistCompatibilityRemainsSupported(t *testing.T) {
 	dir := t.TempDir()
+	argv, allowPrefix, _ := benignExecFixture()
 	bundle := policy.Bundle{
 		Version: "v1",
 		Rules: []policy.Rule{
@@ -287,7 +290,7 @@ func TestServiceExecLegacyAllowlistCompatibilityRemainsSupported(t *testing.T) {
 				Environments: []string{"dev"},
 				Obligations: map[string]any{
 					"sandbox_mode":   "local",
-					"exec_allowlist": []any{[]any{"cmd", "/c", "echo"}},
+					"exec_allowlist": []any{allowPrefix},
 				},
 			},
 		},
@@ -307,7 +310,7 @@ func TestServiceExecLegacyAllowlistCompatibilityRemainsSupported(t *testing.T) {
 		ActionID:      "act4-legacy",
 		ActionType:    "process.exec",
 		Resource:      "file://workspace/",
-		Params:        []byte(`{"argv":["cmd","/c","echo","hi"],"cwd":"","env_allowlist_keys":[]}`),
+		Params:        mustExecParams(t, argv),
 		TraceID:       "trace4-legacy",
 		Context:       action.Context{Extensions: map[string]json.RawMessage{}},
 	}, identity.VerifiedIdentity{
@@ -332,6 +335,7 @@ func TestServiceExecLegacyAllowlistCompatibilityRemainsSupported(t *testing.T) {
 
 func TestServiceExecStrictModeRejectsLegacyAllowlistFallback(t *testing.T) {
 	dir := t.TempDir()
+	argv, allowPrefix, _ := benignExecFixture()
 	bundle := policy.Bundle{
 		Version: "v1",
 		Rules: []policy.Rule{
@@ -345,7 +349,7 @@ func TestServiceExecStrictModeRejectsLegacyAllowlistFallback(t *testing.T) {
 				Environments: []string{"dev"},
 				Obligations: map[string]any{
 					"sandbox_mode":   "local",
-					"exec_allowlist": []any{[]any{"cmd", "/c", "echo"}},
+					"exec_allowlist": []any{allowPrefix},
 				},
 			},
 		},
@@ -366,7 +370,7 @@ func TestServiceExecStrictModeRejectsLegacyAllowlistFallback(t *testing.T) {
 		ActionID:      "act4-strict",
 		ActionType:    "process.exec",
 		Resource:      "file://workspace/",
-		Params:        []byte(`{"argv":["cmd","/c","echo","hi"],"cwd":"","env_allowlist_keys":[]}`),
+		Params:        mustExecParams(t, argv),
 		TraceID:       "trace4-strict",
 		Context:       action.Context{Extensions: map[string]json.RawMessage{}},
 	}, identity.VerifiedIdentity{
@@ -384,6 +388,26 @@ func TestServiceExecStrictModeRejectsLegacyAllowlistFallback(t *testing.T) {
 	if resp.Decision != policy.DecisionDeny || resp.Reason != "exec_legacy_mode_disabled" {
 		t.Fatalf("expected strict-mode legacy denial, got %+v", resp)
 	}
+}
+
+func benignExecFixture() ([]string, []any, []string) {
+	if runtime.GOOS == "windows" {
+		return []string{"cmd", "/c", "echo", "hi"}, []any{"cmd", "/c", "echo"}, []string{"cmd", "/c", "echo", "*"}
+	}
+	return []string{"sh", "-c", "printf %s hi"}, []any{"sh", "-c", "printf %s hi"}, []string{"sh", "-c", "printf %s *"}
+}
+
+func mustExecParams(t *testing.T, argv []string) []byte {
+	t.Helper()
+	params, err := json.Marshal(map[string]any{
+		"argv":               argv,
+		"cwd":                "",
+		"env_allowlist_keys": []string{},
+	})
+	if err != nil {
+		t.Fatalf("marshal exec params: %v", err)
+	}
+	return params
 }
 
 func TestServiceExecPolicyCanDenyProtectedBranchPush(t *testing.T) {
