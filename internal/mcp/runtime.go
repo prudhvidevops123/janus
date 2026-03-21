@@ -21,6 +21,15 @@ type RuntimeOptions struct {
 	ExecCompatibilityMode string
 	BundleRoles           []string
 	SandboxEvidence       sandbox.Evidence
+	ApprovalStorePath     string
+	ApprovalTTLSeconds    int
+	UpstreamRoutes        []UpstreamRoute
+}
+
+type UpstreamRoute struct {
+	URL        string
+	Methods    []string
+	PathPrefix string
 }
 
 type logLevel int
@@ -65,6 +74,9 @@ func ParseRuntimeOptions(options RuntimeOptions) (RuntimeOptions, error) {
 		ExecCompatibilityMode: options.ExecCompatibilityMode,
 		BundleRoles:           options.BundleRoles,
 		SandboxEvidence:       options.SandboxEvidence,
+		ApprovalStorePath:     strings.TrimSpace(options.ApprovalStorePath),
+		ApprovalTTLSeconds:    options.ApprovalTTLSeconds,
+		UpstreamRoutes:        append([]UpstreamRoute(nil), options.UpstreamRoutes...),
 	}, nil
 }
 

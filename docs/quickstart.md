@@ -2,6 +2,8 @@
 
 This is the canonical first run for Nomos. It uses only checked-in files and should get a new user to one deterministic allow and one deterministic deny in under 10 minutes.
 
+This quickstart demonstrates Nomos on the mediated path only. It is a local evaluation flow, not a claim of full mediation or strong-guarantee deployment.
+
 ## Prerequisites
 
 - Go 1.25+ on `PATH`

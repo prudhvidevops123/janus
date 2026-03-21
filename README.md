@@ -32,14 +32,14 @@ Nomos is exactly built to enforce that boundary based on Zero trust security pri
 
 With Nomos:
 
-- risky actions hit one control point before they happen
+- routed actions hit one control point before they happen
 - the same normalized action gets the same decision under the same identity, environment, and policy bundle
 - sensitive actions can be routed to manual approval
-- approvals are bound to action fingerprints, so they cannot be replayed onto different inputs
-- agents do not need to hold long-lived enterprise credentials
-- output can be redacted before it leaves the boundary
+- approvals are bound to action fingerprints, so they cannot be replayed onto different inputs on the mediated path
+- agents do not need to hold long-lived enterprise credentials on the Nomos-governed path
+- output can be redacted before it leaves the Nomos-mediated path
 - governed actions produce audit evidence and replayable traces
-- the same boundary works across MCP and HTTP integrations
+- the same control model works across MCP and HTTP integrations
 - behavior stays flexible because you shape it with your own policies and configs
 
 ## Demo First
@@ -147,7 +147,7 @@ See:
 
 ## What Nomos Governs
 
-Nomos governs actions such as:
+Nomos can govern actions such as:
 
 - `fs.read`
 - `fs.write`
@@ -232,7 +232,7 @@ The flow is simple:
 1. an agent tries to do something real
 2. Nomos verifies who is asking and normalizes the action
 3. policy returns `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`
-4. only allowed actions execute
+4. only allowed actions execute on the mediated path
 5. outputs are redacted before they come back
 6. audit evidence is recorded for the whole path
 
@@ -303,7 +303,7 @@ Those tools solve pieces of the problem.
 | sandbox runtimes | process isolation |
 | MCP servers | tool exposure |
 
-Nomos puts policy, approvals, redaction, and audit around the moment an agent tries to do something real.
+Nomos puts policy, approvals, redaction, and audit around the moment an agent tries to do something real on the mediated path.
 
 ## Testing
 

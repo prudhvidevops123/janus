@@ -2,16 +2,16 @@
 
 This is the canonical redaction model for Nomos. It combines the guarantee contract and source inventory.
 
-## Hard Guarantees
+## Built-In Guarantees On The Mediated Path
 
-Nomos guarantees the following by default:
+For the built-in Nomos mediation path, Nomos guarantees the following by default:
 
 - authorization-bearing headers are redacted before agent-visible output, logs, and audit persistence
 - brokered secret values are never returned directly from `secrets.checkout`; only lease identifiers are returned
 - when executor output contains a brokered secret value, Nomos redacts it before returning or summarizing that output
 - audit sinks redact payload bytes before persistence
 
-These guarantees apply to the built-in mediation path only.
+These guarantees apply to the built-in mediation path only. They do not cover secrets emitted outside Nomos mediation or bypasses available in weaker environments.
 
 ## Redaction Sources
 

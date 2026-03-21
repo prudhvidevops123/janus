@@ -140,6 +140,9 @@ func runMCP(args []string) {
 		ExecCompatibilityMode: cfg.Policy.ExecCompatibilityMode,
 		BundleRoles:           cfg.Policy.EffectiveBundleRoles(),
 		SandboxEvidence:       cfg.Runtime.Evidence.SandboxEvidence(),
+		ApprovalStorePath:     cfg.Approvals.StorePath,
+		ApprovalTTLSeconds:    cfg.Approvals.TTLSeconds,
+		UpstreamRoutes:        toMCPUpstreamRoutes(cfg.Upstream.Routes),
 	})
 	if err != nil {
 		cliFatalf("invalid mcp runtime options: %v", err)
@@ -749,6 +752,21 @@ func protocolSafeMCPSink(sink string) string {
 		return "stderr"
 	}
 	return strings.Join(out, ",")
+}
+
+func toMCPUpstreamRoutes(routes []gateway.UpstreamRoute) []mcp.UpstreamRoute {
+	if len(routes) == 0 {
+		return nil
+	}
+	out := make([]mcp.UpstreamRoute, 0, len(routes))
+	for _, route := range routes {
+		out = append(out, mcp.UpstreamRoute{
+			URL:        route.URL,
+			Methods:    append([]string(nil), route.Methods...),
+			PathPrefix: route.PathPrefix,
+		})
+	}
+	return out
 }
 
 func mcpSinkRewritesStdout(sink string) bool {

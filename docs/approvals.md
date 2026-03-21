@@ -1,6 +1,6 @@
 # Approval Binding Model
 
-Nomos binds approvals to deterministic targets so approvals cannot be replayed across different inputs.
+Nomos binds approvals to deterministic targets so an approval for one normalized input is not valid for a different normalized input.
 
 ## Fingerprint
 
