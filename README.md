@@ -203,34 +203,6 @@ See:
 - [docs/approvals.md](./docs/approvals.md)
 - [docs/audit-schema.md](./docs/audit-schema.md)
 
-## Few More Use Cases
-
-### Coding Agents
-
-- allow `git status`
-- deny `git push`
-- deny `.env` reads
-- allow bounded patch application
-
-### Customer Operations Agents
-
-- allow order lookup
-- require approval for refunds or credits
-- deny bulk customer export
-
-### CI Agents
-
-- allow test execution
-- deny release publishing outside policy
-- require approval for production-impacting actions
-
-See:
-
-- [docs/use-cases.md](./docs/use-cases.md)
-- [deploy/ci/github-actions-quickstart.yml](./deploy/ci/github-actions-quickstart.yml)
-- [deploy/ci/github-actions-hardened.yml](./deploy/ci/github-actions-hardened.yml)
-
-
 ## Guarantees And Deployment Modes
 
 Nomos makes different claims depending on where it is deployed. These are runtime-derived **assurance levels**, not marketing labels.
@@ -313,6 +285,34 @@ See:
 
 - [TESTING.md](./TESTING.md)
 - [docs/local-test-plan.md](./docs/local-test-plan.md)
+
+## Few More Use Cases
+
+### Coding Agents
+
+- allow `git status`
+- deny `git push`
+- deny `.env` reads
+- allow bounded patch application
+
+### Customer Operations Agents
+
+- allow order lookup
+- require approval for refunds or credits
+- deny bulk customer export
+
+### CI Agents
+
+- allow test execution
+- deny release publishing outside policy
+- require approval for production-impacting actions
+
+See:
+
+- [docs/use-cases.md](./docs/use-cases.md)
+- [deploy/ci/github-actions-quickstart.yml](./deploy/ci/github-actions-quickstart.yml)
+- [deploy/ci/github-actions-hardened.yml](./deploy/ci/github-actions-hardened.yml)
+
 
 ## Docs Map
 
