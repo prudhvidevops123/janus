@@ -9,52 +9,38 @@
 
 **Nomos is an execution firewall for AI agents.**
 
-It sits between agents and real side effects such as file reads, code changes, shell commands, HTTP calls, and credential use. Instead of trusting prompts or tool wrappers, Nomos makes a deterministic decision at the execution boundary:
+It sits between agents and real actions such as reading files, changing code, running commands, calling APIs, and using credentials. Instead of trusting prompts or hoping the agent behaves, Nomos makes one explicit decision at the execution boundary:
 
 - `ALLOW`
 - `DENY`
 - `REQUIRE_APPROVAL`
 
-If an agent can still read `.env`, run `git push`, call arbitrary APIs, or print secrets into logs, your safety boundary is advisory. Nomos is built to make that boundary explicit.
+If an agent can still read `.env`, run `git push`, call arbitrary APIs, issue refunds, book free tickets, leak customer data, or trigger `terraform destroy`, your safety boundary is advisory. Prompt injection, tool misuse, and over-broad credentials turn into real-world side effects fast. Nomos is built to make that boundary explicit.
 
 ## Why It Exists
 
-Modern agents can reason well enough to be useful, but they are still one tool call away from:
+Agents can be genuinely useful, but they are still one bad tool call away from:
 
-- reading secrets from the workspace
-- pushing code to protected branches
-- calling external APIs with the wrong payload
-- exfiltrating customer data
-- using credentials far outside their intended scope
+- grabbing secrets you did not mean to expose
+- changing or deleting files you did not ask them to touch
+- pushing code, shipping changes, or running destructive commands too early
+- refunding money, booking something for free, or taking the wrong business action
+- sending private data to the wrong place
+- using powerful credentials in ways you never intended
 
-Nomos does not try to constrain model reasoning. It constrains execution authority.
-
-## The Pitch In 20 Seconds
-
-Without Nomos:
-
-- the agent has direct side-effecting tools
-- prompt restrictions are advisory
-- audit is partial or bolted on afterward
-
-With Nomos:
-
-- risky actions hit one deterministic control point
-- policy returns `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`
-- output can be redacted before it leaves the boundary
-- audit evidence is produced for each governed action
+Nomos does not try to control what the model thinks. It controls what the agent is actually allowed to do.
 
 ## Demo First
 
-The best way to understand Nomos is to watch the same agent attempt the same action with and without an execution boundary in front of it.
+The fastest way to understand Nomos is to watch the same agent attempt the same action with and without Nomos in front of it.
 
-Recommended demo stories:
+Good launch demos:
 
 1. A coding agent tries to read `.env` or run `git push` and Nomos denies it.
 2. A customer-support agent tries to issue a refund and Nomos returns `REQUIRE_APPROVAL`.
 3. A normal read action succeeds through Nomos, proving it is governance, not blanket obstruction.
 
-Placeholder: add a short hero GIF or video here showing one safe action, one approval-gated action, and one deny.
+Placeholder: add a short hero GIF or video here showing one safe action, one approval-gated action, and one denied action.
 
 Placeholder: add a screenshot here of a blocked action with the Nomos decision visible.
 
@@ -125,13 +111,40 @@ See:
 - [docs/local-test-plan.md](./docs/local-test-plan.md)
 - [docs/local-rebuild-and-mcp-commands.md](./docs/local-rebuild-and-mcp-commands.md)
 
+## Install
+
+### Homebrew
+
+```bash
+brew install safe-agentic-world/nomos/nomos
+```
+
+### Scoop
+
+```powershell
+scoop bucket add nomos https://github.com/safe-agentic-world/scoop-nomos
+scoop install nomos
+```
+
+### Go
+
+```bash
+go install github.com/safe-agentic-world/nomos/cmd/nomos@latest
+```
+
+### macOS And Linux Installer
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/safe-agentic-world/nomos/main/install.sh | sh
+```
+
 ## How Nomos Fits
 
-Nomos is agent-agnostic. It is designed to work with different agent frameworks and clients through two main integration paths:
+Nomos is agent-agnostic. You can put it in front of different agent frameworks and clients through two main integration paths:
 
 ### MCP
 
-Use Nomos as an MCP server when your agent client already supports MCP tools.
+Use Nomos as an MCP server when your agent client already knows how to use MCP tools.
 
 Good fit for:
 
@@ -156,7 +169,7 @@ See:
 
 ### HTTP
 
-Use Nomos as an HTTP gateway when your agent runtime already has its own tool loop or application backend.
+Use Nomos as an HTTP gateway when your agent runtime already has its own tool loop or backend service.
 
 Good fit for:
 
@@ -178,7 +191,7 @@ See:
 
 ## What Nomos Governs
 
-Core action types:
+Nomos governs actions such as:
 
 - `fs.read`
 - `fs.write`
@@ -187,13 +200,13 @@ Core action types:
 - `net.http_request`
 - `secrets.checkout`
 
-Core policy decisions:
+Policy returns:
 
 - `ALLOW`
 - `DENY`
 - `REQUIRE_APPROVAL`
 
-Core enforcement features:
+Around those actions, Nomos adds:
 
 - deterministic deny-wins policy evaluation
 - approval binding to action fingerprints
@@ -208,16 +221,7 @@ See:
 - [docs/approvals.md](./docs/approvals.md)
 - [docs/audit-schema.md](./docs/audit-schema.md)
 
-## What Nomos Is Not
-
-Nomos is not:
-
-- an agent framework
-- a prompt guardrail library
-- a sandbox runtime by itself
-- a secrets manager
-
-Nomos is the execution governance layer between agents and real systems.
+Nomos is not an agent framework, a prompt guardrail library, a sandbox runtime by itself, or a secrets manager. It is the layer that decides whether an agent gets to carry out a real action.
 
 ## Real-World Use Cases
 
@@ -277,7 +281,7 @@ Placeholder: add an architecture diagram image here if you want a branded versio
 
 ## Guarantees And Deployment Modes
 
-Nomos makes different claims depending on the environment. These are runtime-derived assurance levels, not marketing labels.
+Nomos makes different claims depending on where it is deployed. These are runtime-derived assurance levels, not marketing labels.
 
 | Deployment mode | Guarantee | Meaning |
 | --- | --- | --- |
@@ -285,7 +289,7 @@ Nomos makes different claims depending on the environment. These are runtime-der
 | partially hardened controlled runtime | `GUARDED` | Nomos strongly mediates the path it sees, but operator/runtime gaps may remain |
 | local unmanaged or remote-dev style usage | `BEST_EFFORT` | Nomos governs routed actions, but cannot guarantee full mediation |
 
-This matters because local demos prove mediation on the routed path, while stronger deployments prove a more complete execution boundary.
+This matters because a local demo proves Nomos can govern the path it sees, while a hardened deployment proves much stronger control over what the agent can actually do.
 
 See:
 
@@ -293,33 +297,6 @@ See:
 - [docs/guarantees.md](./docs/guarantees.md)
 - [docs/strong-guarantee-deployment.md](./docs/strong-guarantee-deployment.md)
 - [docs/reference-architecture.md](./docs/reference-architecture.md)
-
-## Install
-
-### Homebrew
-
-```bash
-brew install safe-agentic-world/nomos/nomos
-```
-
-### Scoop
-
-```powershell
-scoop bucket add nomos https://github.com/safe-agentic-world/scoop-nomos
-scoop install nomos
-```
-
-### Go
-
-```bash
-go install github.com/safe-agentic-world/nomos/cmd/nomos@latest
-```
-
-### macOS And Linux Installer
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/safe-agentic-world/nomos/main/install.sh | sh
-```
 
 ## Starter Bundles And Examples
 
@@ -340,7 +317,7 @@ Starter bundles:
 
 ## Security Model
 
-Nomos is opinionated about a few design rules:
+Nomos is built around a few hard rules:
 
 - no trust in agent-supplied principal or environment claims
 - no raw enterprise credentials returned directly to agents
@@ -367,7 +344,7 @@ Those tools solve pieces of the problem.
 | sandbox runtimes | process isolation |
 | MCP servers | tool exposure |
 
-Nomos composes policy, mediation, execution, redaction, approvals, and audit into one execution boundary for agent side effects.
+Nomos puts policy, approvals, redaction, and audit around the moment an agent tries to do something real.
 
 ## Testing
 
@@ -384,12 +361,6 @@ See:
 
 - [TESTING.md](./TESTING.md)
 - [docs/local-test-plan.md](./docs/local-test-plan.md)
-
-## Current Status
-
-Nomos is pre-`v1.0.0`.
-
-The core gateway, policy engine, audit path, approvals flow, capability contract, and starter bundles are implemented today. The project is intentionally conservative about claims in unmanaged local environments and explicit about stronger operator-backed deployments.
 
 ## Docs Map
 
