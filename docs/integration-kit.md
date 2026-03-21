@@ -2,6 +2,8 @@
 
 This guide covers local agent integration for Nomos using checked-in quickstart files and MCP stdio mode.
 
+Unless otherwise stated, the examples here show how to route actions through Nomos. They do not, by themselves, prove full mediation in unmanaged local environments.
+
 The checked-in configs and policy bundles referenced here are examples only. In real deployments, teams are expected to supply and customize their own configs and policies.
 
 `examples/configs/config.example.json` demonstrates ordered multi-bundle loading with `base.yaml`, `repo.yaml`, `dev.yaml`, and `purchase.yaml`.

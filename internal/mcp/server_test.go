@@ -165,14 +165,18 @@ func TestCapabilitiesExposeHTTPWhenPolicyRequiresApproval(t *testing.T) {
 	if err := os.WriteFile(bundlePath, []byte(data), 0o600); err != nil {
 		t.Fatalf("write bundle: %v", err)
 	}
-	server, err := NewServer(bundlePath, identity.VerifiedIdentity{
+	server, err := NewServerWithRuntimeOptions(bundlePath, identity.VerifiedIdentity{
 		Principal:   "system",
 		Agent:       "nomos",
 		Environment: "dev",
-	}, dir, 64, 10, true, true, "local")
+	}, dir, 64, 10, true, true, "local", RuntimeOptions{
+		ApprovalStorePath:  filepath.Join(dir, "approvals.db"),
+		ApprovalTTLSeconds: 600,
+	})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
+	t.Cleanup(func() { _ = server.Close() })
 	resp := server.handleCapabilities(Request{ID: "1", Method: "nomos.capabilities"})
 	tools, ok := resp.Result.(service.CapabilityEnvelope)
 	if !ok {
@@ -270,5 +274,80 @@ func TestCapabilitySetHashChangesAcrossSurfacedStates(t *testing.T) {
 	approvalCaps := approvalResp.Result.(service.CapabilityEnvelope)
 	if allowCaps.CapabilitySetHash == approvalCaps.CapabilitySetHash {
 		t.Fatalf("expected capability hash to differ across surfaced states: %q", allowCaps.CapabilitySetHash)
+	}
+}
+
+func TestCapabilitiesOnlyAdvertiseApprovalsWhenMCPStoreIsConfigured(t *testing.T) {
+	dir := t.TempDir()
+	bundlePath := filepath.Join(dir, "bundle.json")
+	data := `{"version":"v1","rules":[{"id":"approval-write","action_type":"fs.write","resource":"file://workspace/**","decision":"REQUIRE_APPROVAL","principals":["system"],"agents":["nomos"],"environments":["dev"]}]}`
+	if err := os.WriteFile(bundlePath, []byte(data), 0o600); err != nil {
+		t.Fatalf("write bundle: %v", err)
+	}
+	id := identity.VerifiedIdentity{Principal: "system", Agent: "nomos", Environment: "dev"}
+
+	serverNoStore, err := NewServer(bundlePath, id, dir, 64, 10, true, false, "local")
+	if err != nil {
+		t.Fatalf("new server without store: %v", err)
+	}
+	respNoStore := serverNoStore.handleCapabilities(Request{ID: "1", Method: "nomos.capabilities"})
+	capsNoStore := respNoStore.Result.(service.CapabilityEnvelope)
+	if capsNoStore.ApprovalsEnabled {
+		t.Fatalf("expected approvals disabled without configured MCP store, got %+v", capsNoStore)
+	}
+
+	serverWithStore, err := NewServerWithRuntimeOptions(bundlePath, id, dir, 64, 10, true, false, "local", RuntimeOptions{
+		ApprovalStorePath:  filepath.Join(dir, "approvals.db"),
+		ApprovalTTLSeconds: 600,
+	})
+	if err != nil {
+		t.Fatalf("new server with store: %v", err)
+	}
+	t.Cleanup(func() { _ = serverWithStore.Close() })
+	respWithStore := serverWithStore.handleCapabilities(Request{ID: "2", Method: "nomos.capabilities"})
+	capsWithStore := respWithStore.Result.(service.CapabilityEnvelope)
+	if !capsWithStore.ApprovalsEnabled {
+		t.Fatalf("expected approvals enabled with configured MCP store, got %+v", capsWithStore)
+	}
+}
+
+func TestHandleHTTPRequestHonorsConfiguredUpstreamRoutes(t *testing.T) {
+	dir := t.TempDir()
+	bundlePath := filepath.Join(dir, "bundle.json")
+	data := `{"version":"v1","rules":[{"id":"allow-http","action_type":"net.http_request","resource":"url://api.example.com/**","decision":"ALLOW","principals":["system"],"agents":["nomos"],"environments":["dev"],"obligations":{"net_allowlist":["api.example.com"]}}]}`
+	if err := os.WriteFile(bundlePath, []byte(data), 0o600); err != nil {
+		t.Fatalf("write bundle: %v", err)
+	}
+	server, err := NewServerWithRuntimeOptions(bundlePath, identity.VerifiedIdentity{
+		Principal:   "system",
+		Agent:       "nomos",
+		Environment: "dev",
+	}, dir, 64, 10, false, false, "local", RuntimeOptions{
+		UpstreamRoutes: []UpstreamRoute{{
+			URL:        "https://api.example.com/v1",
+			Methods:    []string{"GET"},
+			PathPrefix: "/v1",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+
+	allowed := server.handleHTTPRequest(Request{
+		ID:     "1",
+		Method: "nomos.http_request",
+		Params: mustJSONBytes(map[string]any{"resource": "url://api.example.com/v1/status", "method": "GET"}),
+	})
+	if allowed.Error == "validation_error" {
+		t.Fatalf("expected configured upstream route to pass precheck, got %+v", allowed)
+	}
+
+	blocked := server.handleHTTPRequest(Request{
+		ID:     "2",
+		Method: "nomos.http_request",
+		Params: mustJSONBytes(map[string]any{"resource": "url://api.example.com/v2/status", "method": "GET"}),
+	})
+	if blocked.Error != "validation_error" {
+		t.Fatalf("expected upstream mismatch validation_error, got %+v", blocked)
 	}
 }

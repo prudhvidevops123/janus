@@ -7,11 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	neturl "net/url"
 	"os"
+	"path"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/safe-agentic-world/nomos/internal/action"
+	"github.com/safe-agentic-world/nomos/internal/approval"
 	"github.com/safe-agentic-world/nomos/internal/audit"
 	"github.com/safe-agentic-world/nomos/internal/executor"
 	"github.com/safe-agentic-world/nomos/internal/identity"
@@ -22,6 +27,7 @@ import (
 
 type Server struct {
 	service             *service.Service
+	approvals           *approval.Store
 	identity            identity.VerifiedIdentity
 	approvalsEnabled    bool
 	sandboxEnabled      bool
@@ -30,6 +36,7 @@ type Server struct {
 	policyBundleHash    string
 	policyBundleSources []string
 	assuranceLevel      string
+	upstreamRoutes      []UpstreamRoute
 	logger              *runtimeLogger
 	pid                 int
 }
@@ -66,30 +73,35 @@ type rpcResponse struct {
 }
 
 type fsReadParams struct {
-	Resource string `json:"resource"`
+	Resource   string `json:"resource"`
+	ApprovalID string `json:"approval_id,omitempty"`
 }
 
 type fsWriteParams struct {
-	Resource string `json:"resource"`
-	Content  string `json:"content"`
+	Resource   string `json:"resource"`
+	Content    string `json:"content"`
+	ApprovalID string `json:"approval_id,omitempty"`
 }
 
 type execParams struct {
 	Argv             []string `json:"argv"`
 	Cwd              string   `json:"cwd"`
 	EnvAllowlistKeys []string `json:"env_allowlist_keys"`
+	ApprovalID       string   `json:"approval_id,omitempty"`
 }
 
 type httpParams struct {
-	Resource string            `json:"resource"`
-	Method   string            `json:"method"`
-	Body     string            `json:"body"`
-	Header   map[string]string `json:"headers"`
+	Resource   string            `json:"resource"`
+	Method     string            `json:"method"`
+	Body       string            `json:"body"`
+	Header     map[string]string `json:"headers"`
+	ApprovalID string            `json:"approval_id,omitempty"`
 }
 
 type patchParams struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	Path       string `json:"path"`
+	Content    string `json:"content"`
+	ApprovalID string `json:"approval_id,omitempty"`
 }
 
 type changeSetParams struct {
@@ -136,19 +148,32 @@ func NewServerForBundlesWithRuntimeOptionsAndRecorder(bundlePaths []string, iden
 	if recorder == nil {
 		recorder = noopRecorder{}
 	}
-	svc := service.New(engine, reader, writerExec, patcher, execRunner, httpRunner, recorder, logger.redactor, nil, nil, sandboxProfile, nil)
+	var approvalStore *approval.Store
+	if approvalsEnabled && runtimeOptions.ApprovalStorePath != "" {
+		ttl := time.Duration(runtimeOptions.ApprovalTTLSeconds) * time.Second
+		if ttl <= 0 {
+			ttl = 10 * time.Minute
+		}
+		approvalStore, err = approval.Open(runtimeOptions.ApprovalStorePath, ttl, time.Now)
+		if err != nil {
+			return nil, err
+		}
+	}
+	svc := service.New(engine, reader, writerExec, patcher, execRunner, httpRunner, recorder, logger.redactor, approvalStore, nil, sandboxProfile, nil)
 	svc.SetSandboxEvidence(runtimeOptions.SandboxEvidence, []string{workspaceRoot})
 	svc.SetExecCompatibilityMode(runtimeOptions.ExecCompatibilityMode)
 	return &Server{
 		service:             svc,
+		approvals:           approvalStore,
 		identity:            identity,
-		approvalsEnabled:    approvalsEnabled,
+		approvalsEnabled:    approvalStore != nil,
 		sandboxEnabled:      sandboxEnabled,
 		outputMaxBytes:      maxBytes,
 		outputMaxLines:      maxLines,
 		policyBundleHash:    bundle.Hash,
 		policyBundleSources: policy.BundleSourceLabels(bundle),
 		assuranceLevel:      "NONE",
+		upstreamRoutes:      append([]UpstreamRoute(nil), runtimeOptions.UpstreamRoutes...),
 		logger:              logger,
 		pid:                 os.Getpid(),
 	}, nil
@@ -164,6 +189,15 @@ func (s *Server) SetAssuranceLevel(level string) {
 	}
 	s.assuranceLevel = level
 	s.service.SetAssuranceLevel(level)
+}
+
+func (s *Server) Close() error {
+	if s == nil || s.approvals == nil {
+		return nil
+	}
+	err := s.approvals.Close()
+	s.approvals = nil
+	return err
 }
 
 func (s *Server) ServeStdio(in io.Reader, out io.Writer) error {
@@ -369,11 +403,11 @@ func parseToolCallParams(raw json.RawMessage) (string, json.RawMessage, error) {
 func (s *Server) toolsList() []map[string]any {
 	return []map[string]any{
 		{"name": "nomos.capabilities", "description": "Return the policy-derived capability contract for this session", "inputSchema": map[string]any{"type": "object", "additionalProperties": false}},
-		{"name": "nomos.fs_read", "description": "Read a workspace file. Check nomos.capabilities for current allow versus approval state.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"resource": map[string]any{"type": "string"}}, "required": []string{"resource"}, "additionalProperties": false}},
-		{"name": "nomos.fs_write", "description": "Write a workspace file. Check nomos.capabilities for current allow versus approval state.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"resource": map[string]any{"type": "string"}, "content": map[string]any{"type": "string"}}, "required": []string{"resource", "content"}, "additionalProperties": false}},
-		{"name": "nomos.apply_patch", "description": "Apply deterministic patch payload. Check nomos.capabilities for current allow versus approval state.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}, "content": map[string]any{"type": "string"}}, "required": []string{"path", "content"}, "additionalProperties": false}},
-		{"name": "nomos.exec", "description": "Run a bounded process action. Check nomos.capabilities for current allow versus approval state.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"argv": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "cwd": map[string]any{"type": "string"}, "env_allowlist_keys": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "required": []string{"argv"}, "additionalProperties": false}},
-		{"name": "nomos.http_request", "description": "Run a policy-gated HTTP request. Check nomos.capabilities for current allow versus approval state.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"resource": map[string]any{"type": "string"}, "method": map[string]any{"type": "string"}, "body": map[string]any{"type": "string"}, "headers": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}}, "required": []string{"resource"}, "additionalProperties": false}},
+		{"name": "nomos.fs_read", "description": "Read a workspace file. Check nomos.capabilities for current allow versus approval state.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"resource": map[string]any{"type": "string"}, "approval_id": map[string]any{"type": "string"}}, "required": []string{"resource"}, "additionalProperties": false}},
+		{"name": "nomos.fs_write", "description": "Write a workspace file. Check nomos.capabilities for current allow versus approval state.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"resource": map[string]any{"type": "string"}, "content": map[string]any{"type": "string"}, "approval_id": map[string]any{"type": "string"}}, "required": []string{"resource", "content"}, "additionalProperties": false}},
+		{"name": "nomos.apply_patch", "description": "Apply deterministic patch payload. Check nomos.capabilities for current allow versus approval state.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}, "content": map[string]any{"type": "string"}, "approval_id": map[string]any{"type": "string"}}, "required": []string{"path", "content"}, "additionalProperties": false}},
+		{"name": "nomos.exec", "description": "Run a bounded process action. Check nomos.capabilities for current allow versus approval state.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"argv": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "cwd": map[string]any{"type": "string"}, "env_allowlist_keys": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}, "approval_id": map[string]any{"type": "string"}}, "required": []string{"argv"}, "additionalProperties": false}},
+		{"name": "nomos.http_request", "description": "Run a policy-gated HTTP request. Check nomos.capabilities for current allow versus approval state.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"resource": map[string]any{"type": "string"}, "method": map[string]any{"type": "string"}, "body": map[string]any{"type": "string"}, "headers": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}}, "approval_id": map[string]any{"type": "string"}}, "required": []string{"resource"}, "additionalProperties": false}},
 		{"name": "repo.validate_change_set", "description": "Validate changed repo paths against policy before attempting a patch action.", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"paths": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "required": []string{"paths"}, "additionalProperties": false}},
 	}
 }
@@ -481,7 +515,7 @@ func (s *Server) handleRequest(req Request) Response {
 		Resource:      params.Resource,
 		Params:        []byte(`{}`),
 		TraceID:       "mcp_" + req.ID,
-		Context:       action.Context{Extensions: map[string]json.RawMessage{}},
+		Context:       action.Context{Extensions: buildActionExtensions(params.ApprovalID)},
 	}
 	act, err := action.ToAction(actionReq, s.identity)
 	if err != nil {
@@ -511,7 +545,7 @@ func (s *Server) handleFSWrite(req Request) Response {
 		Resource:      params.Resource,
 		Params:        mustJSONBytes(map[string]string{"content": params.Content}),
 		TraceID:       "mcp_" + req.ID,
-		Context:       action.Context{Extensions: map[string]json.RawMessage{}},
+		Context:       action.Context{Extensions: buildActionExtensions(params.ApprovalID)},
 	}
 	act, err := action.ToAction(actionReq, s.identity)
 	if err != nil {
@@ -541,7 +575,7 @@ func (s *Server) handleApplyPatch(req Request) Response {
 		Resource:      "repo://local/workspace",
 		Params:        mustJSONBytes(map[string]string{"path": params.Path, "content": params.Content}),
 		TraceID:       "mcp_" + req.ID,
-		Context:       action.Context{Extensions: map[string]json.RawMessage{}},
+		Context:       action.Context{Extensions: buildActionExtensions(params.ApprovalID)},
 	}
 	act, err := action.ToAction(actionReq, s.identity)
 	if err != nil {
@@ -569,9 +603,13 @@ func (s *Server) handleExec(req Request) Response {
 		ActionID:      "mcp_" + req.ID,
 		ActionType:    "process.exec",
 		Resource:      "file://workspace/",
-		Params:        mustJSONBytes(params),
-		TraceID:       "mcp_" + req.ID,
-		Context:       action.Context{Extensions: map[string]json.RawMessage{}},
+		Params: mustJSONBytes(map[string]any{
+			"argv":               params.Argv,
+			"cwd":                params.Cwd,
+			"env_allowlist_keys": params.EnvAllowlistKeys,
+		}),
+		TraceID: "mcp_" + req.ID,
+		Context: action.Context{Extensions: buildActionExtensions(params.ApprovalID)},
 	}
 	act, err := action.ToAction(actionReq, s.identity)
 	if err != nil {
@@ -594,6 +632,9 @@ func (s *Server) handleHTTPRequest(req Request) Response {
 	if err := dec.Decode(&params); err != nil || params.Resource == "" {
 		return Response{ID: req.ID, Error: "invalid_params"}
 	}
+	if err := validateUpstreamRoute(s.upstreamRoutes, params.Resource, params.Method); err != nil {
+		return Response{ID: req.ID, Error: "validation_error"}
+	}
 	actionReq := action.Request{
 		SchemaVersion: "v1",
 		ActionID:      "mcp_" + req.ID,
@@ -601,7 +642,7 @@ func (s *Server) handleHTTPRequest(req Request) Response {
 		Resource:      params.Resource,
 		Params:        mustJSONBytes(map[string]any{"method": params.Method, "body": params.Body, "headers": params.Header}),
 		TraceID:       "mcp_" + req.ID,
-		Context:       action.Context{Extensions: map[string]json.RawMessage{}},
+		Context:       action.Context{Extensions: buildActionExtensions(params.ApprovalID)},
 	}
 	act, err := action.ToAction(actionReq, s.identity)
 	if err != nil {
@@ -680,6 +721,9 @@ func RunStdioForBundlesWithRuntimeOptionsAndRecorder(bundlePaths []string, ident
 	if err != nil {
 		return err
 	}
+	defer func() {
+		_ = server.Close()
+	}()
 	server.SetAssuranceLevel(assuranceLevel)
 	return server.ServeStdio(os.Stdin, os.Stdout)
 }
@@ -690,6 +734,15 @@ func mustJSONBytes(value any) []byte {
 		return []byte(`{}`)
 	}
 	return data
+}
+
+func buildActionExtensions(approvalID string) map[string]json.RawMessage {
+	extensions := map[string]json.RawMessage{}
+	if strings.TrimSpace(approvalID) == "" {
+		return extensions
+	}
+	extensions["approval"] = mustJSONBytes(map[string]string{"approval_id": strings.TrimSpace(approvalID)})
+	return extensions
 }
 
 type noopRecorder struct{}
@@ -721,6 +774,88 @@ func classifyToolError(err error) string {
 	default:
 		return "execution_error"
 	}
+}
+
+func validateUpstreamRoute(routes []UpstreamRoute, resource, method string) error {
+	if len(routes) == 0 {
+		return nil
+	}
+	normalized, err := normalizeURLResource(resource)
+	if err != nil {
+		return err
+	}
+	host, reqPath, err := routeTargetFromNormalized(normalized)
+	if err != nil {
+		return err
+	}
+	method = strings.ToUpper(strings.TrimSpace(method))
+	if method == "" {
+		method = "GET"
+	}
+	for _, route := range routes {
+		if upstreamRouteMatches(route, host, reqPath, method) {
+			return nil
+		}
+	}
+	return errors.New("upstream route not configured")
+}
+
+func normalizeURLResource(resource string) (string, error) {
+	resource = strings.TrimSpace(resource)
+	if resource == "" {
+		return "", errors.New("resource is empty")
+	}
+	if !strings.HasPrefix(resource, "url://") {
+		return "", errors.New("resource is not url")
+	}
+	return resource, nil
+}
+
+func upstreamRouteMatches(route UpstreamRoute, host, reqPath, method string) bool {
+	parsed, err := neturl.Parse(strings.TrimSpace(route.URL))
+	if err != nil {
+		return false
+	}
+	routeHost := strings.ToLower(parsed.Host)
+	if routeHost != strings.ToLower(host) {
+		return false
+	}
+	if len(route.Methods) > 0 {
+		allowed := make([]string, 0, len(route.Methods))
+		for _, item := range route.Methods {
+			allowed = append(allowed, strings.ToUpper(strings.TrimSpace(item)))
+		}
+		if !slices.Contains(allowed, method) {
+			return false
+		}
+	}
+	prefix := strings.TrimSpace(route.PathPrefix)
+	if prefix == "" {
+		prefix = parsed.EscapedPath()
+		if prefix == "" {
+			prefix = "/"
+		}
+	}
+	if reqPath == prefix {
+		return true
+	}
+	if strings.HasSuffix(prefix, "/") {
+		return strings.HasPrefix(reqPath, prefix)
+	}
+	return strings.HasPrefix(reqPath, prefix+"/")
+}
+
+func routeTargetFromNormalized(resource string) (string, string, error) {
+	raw := strings.TrimPrefix(resource, "url://")
+	host, pathValue, ok := strings.Cut(raw, "/")
+	if !ok {
+		return host, "/", nil
+	}
+	cleaned := path.Clean("/" + pathValue)
+	if cleaned == "." || cleaned == "" {
+		cleaned = "/"
+	}
+	return host, cleaned, nil
 }
 
 func capabilityMediationNotice(level string) string {

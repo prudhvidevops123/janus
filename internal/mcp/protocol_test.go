@@ -3,6 +3,7 @@ package mcp
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/safe-agentic-world/nomos/internal/action"
 	"github.com/safe-agentic-world/nomos/internal/identity"
 	"github.com/safe-agentic-world/nomos/internal/service"
 )
@@ -409,6 +411,112 @@ func TestHandleRequestMapsMissingFilesToNotFound(t *testing.T) {
 func TestClassifyToolErrorKeepsUnknownFailuresAsExecutionError(t *testing.T) {
 	if got := classifyToolError(errors.New("boom")); got != "execution_error" {
 		t.Fatalf("expected execution_error, got %q", got)
+	}
+}
+
+func TestFramedToolsCallRequireApprovalIncludesApprovalMetadata(t *testing.T) {
+	dir := t.TempDir()
+	bundlePath := filepath.Join(dir, "bundle.json")
+	bundle := `{"version":"v1","rules":[{"id":"approval-write","action_type":"fs.write","resource":"file://workspace/**","decision":"REQUIRE_APPROVAL","principals":["system"],"agents":["nomos"],"environments":["dev"]}]}`
+	if err := os.WriteFile(bundlePath, []byte(bundle), 0o600); err != nil {
+		t.Fatalf("write bundle: %v", err)
+	}
+	server, err := NewServerWithRuntimeOptions(bundlePath, identity.VerifiedIdentity{
+		Principal:   "system",
+		Agent:       "nomos",
+		Environment: "dev",
+	}, dir, 1024, 10, true, false, "local", RuntimeOptions{
+		ApprovalStorePath:  filepath.Join(dir, "approvals.db"),
+		ApprovalTTLSeconds: 600,
+	})
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+
+	var in bytes.Buffer
+	writeFramedRequest(t, &in, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      6,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "nomos.fs_write",
+			"arguments": map[string]any{"resource": "file://workspace/out.txt", "content": "hello"},
+		},
+	})
+	var out bytes.Buffer
+	if err := server.ServeStdio(&in, &out); err != nil {
+		t.Fatalf("serve stdio: %v", err)
+	}
+	reader := bufio.NewReader(bytes.NewReader(out.Bytes()))
+	resp := readFramedResponse(t, reader)
+	result := resp["result"].(map[string]any)
+	if result["isError"].(bool) {
+		t.Fatalf("expected successful tools/call response: %+v", result)
+	}
+	text := result["content"].([]any)[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "APPROVAL") || !strings.Contains(text, "approval_id:") || !strings.Contains(text, "approval_fingerprint:") || !strings.Contains(text, "approval_expires_at:") {
+		t.Fatalf("expected approval metadata in tools/call content, got %s", text)
+	}
+}
+
+func TestHandleRequestCanResumeApprovedActionViaApprovalID(t *testing.T) {
+	dir := t.TempDir()
+	bundlePath := filepath.Join(dir, "bundle.json")
+	bundle := `{"version":"v1","rules":[{"id":"approval-write","action_type":"fs.write","resource":"file://workspace/**","decision":"REQUIRE_APPROVAL","principals":["system"],"agents":["nomos"],"environments":["dev"]}]}`
+	if err := os.WriteFile(bundlePath, []byte(bundle), 0o600); err != nil {
+		t.Fatalf("write bundle: %v", err)
+	}
+	server, err := NewServerWithRuntimeOptions(bundlePath, identity.VerifiedIdentity{
+		Principal:   "system",
+		Agent:       "nomos",
+		Environment: "dev",
+	}, dir, 1024, 10, true, false, "local", RuntimeOptions{
+		ApprovalStorePath:  filepath.Join(dir, "approvals.db"),
+		ApprovalTTLSeconds: 600,
+	})
+	if err != nil {
+		t.Fatalf("new server: %v", err)
+	}
+	t.Cleanup(func() { _ = server.Close() })
+
+	first := server.handleRequest(Request{
+		ID:     "7",
+		Method: "nomos.fs_write",
+		Params: mustJSONBytes(map[string]any{"resource": "file://workspace/out.txt", "content": "hello"}),
+	})
+	if first.Error != "" {
+		t.Fatalf("unexpected first call error: %+v", first)
+	}
+	firstResp, ok := first.Result.(action.Response)
+	if !ok {
+		t.Fatalf("expected action response, got %+T", first.Result)
+	}
+	if firstResp.Decision != "REQUIRE_APPROVAL" || firstResp.ApprovalID == "" {
+		t.Fatalf("expected pending approval response, got %+v", firstResp)
+	}
+	if _, err := server.approvals.Decide(context.Background(), firstResp.ApprovalID, "APPROVE"); err != nil {
+		t.Fatalf("approve pending action: %v", err)
+	}
+
+	second := server.handleRequest(Request{
+		ID:     "8",
+		Method: "nomos.fs_write",
+		Params: mustJSONBytes(map[string]any{"resource": "file://workspace/out.txt", "content": "hello", "approval_id": firstResp.ApprovalID}),
+	})
+	if second.Error != "" {
+		t.Fatalf("unexpected second call error: %+v", second)
+	}
+	secondResp := second.Result.(action.Response)
+	if secondResp.Decision != "ALLOW" || secondResp.Reason != "allow_by_approval" {
+		t.Fatalf("expected approved retry to allow, got %+v", secondResp)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "out.txt"))
+	if err != nil {
+		t.Fatalf("read written file: %v", err)
+	}
+	if string(data) != "hello" {
+		t.Fatalf("unexpected file content %q", string(data))
 	}
 }
 

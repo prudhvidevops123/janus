@@ -7,203 +7,213 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/safe-agentic-world/nomos)](./go.mod)
 [![License](https://img.shields.io/github/license/safe-agentic-world/nomos)](./LICENSE)
 
-Quickstart: allow one action, deny one action, inspect one audit event in 5 minutes.
+**Nomos is an execution firewall for AI agents.**
 
-**Nomos is a zero-trust control plane for AI agent side effects.** It acts as an **execution firewall for agent actions**. Every filesystem change, command, HTTP call, or credential access passes through Nomos, where deterministic policy decides whether the action is allowed.
+It sits between agents and **real actions** such as reading files, changing code, running commands, calling APIs, and using credentials. Instead of trusting prompts or hoping the agent behaves, Nomos makes one explicit decision at the **execution boundary**:
 
-If an agent can still read `.env`, run `git push`, call arbitrary APIs, or print secrets into logs, your safety boundary is advisory. Agents do not receive raw enterprise credentials. It mediates actions like:
+- `ALLOW`
+- `DENY`
+- `REQUIRE_APPROVAL`
 
-- reading `.env` or SSH keys
-- applying code patches
-- running shell commands
-- calling external APIs
-- retrieving credentials
+Nomos is **agent-agnostic** and **model-agnostic**. You can put it in front of different agent frameworks, different model providers, and different tool runtimes, then shape its behavior with your own **policies** and **configs**.
 
-The checked-in configs and policy bundles in this repo are starter examples only. Nomos is agent-agnostic and runtime policy-agnostic: teams are expected to supply and customize their own policies.
 
-Nomos does **not** try to control model reasoning. It controls **execution authority**.
+## Why Nomos Exists
 
-## Quick Demo
+Agents can be useful, but they are still one bad tool call away from:
 
-This path uses only checked-in files and gives you one `ALLOW` and one `DENY`.
-If you are evaluating Nomos for Claude Code or Codex, start with MCP mode first.
+- wrong and unwanted business actions like refunding money, booking something for free due to prompt injection. 
+- pushing code, shipping changes, or running destructive commands like `terraform destroy`, `git push origin main`, or `kubectl delete`
+- changing or deleting files you did not ask it to touch
+- using powerful credentials in ways you never intended
 
-From the repo root:
-
-```bash
-nomos doctor -c ./examples/quickstart/config.quickstart.json --format json
-nomos policy test --action ./examples/quickstart/actions/allow-readme.json --bundle ./examples/policies/safe.yaml
-nomos policy test --action ./examples/quickstart/actions/deny-env.json --bundle ./examples/policies/safe.yaml
-```
-
-Expected result:
-
-- `doctor` reports `READY`
-- `allow-readme.json` returns `ALLOW`
-- `deny-env.json` returns `DENY`
-
-Sample result lines:
-
-```text
-ALLOW  fs.read  file://workspace/README.md
-DENY   fs.read  file://workspace/.env
-```
-
-Then start MCP mode:
-
-```bash
-nomos mcp -c ./examples/quickstart/config.quickstart.json
-```
-
-This works without `-p` because `examples/quickstart/config.quickstart.json` already sets `policy.policy_bundle_path`.
-
-Register it in Claude Code with:
-
-```json
-{
-  "command": "nomos",
-  "args": ["mcp", "-c", "./examples/quickstart/config.quickstart.json"]
-}
-```
-
-Then ask your agent to use canonical Nomos file resources, for example `file://workspace/README.md` and `file://workspace/.env`.
-
-Expected result: `README.md` is allowed and `.env` is denied.
-
-Don't have Claude Code or Codex installed? Run the HTTP example instead:
-
-```bash
-nomos serve -c ./examples/quickstart/config.quickstart.json
-python ./examples/openai-compatible/nomos_http_loop.py
-```
-
-The startup log shows `gateway listening on :8080 (http)`.
-Use `http://127.0.0.1:8080` locally.
-
-That HTTP example sends:
-
-- one allowed `fs.read` for `README.md`
-- one denied `fs.read` for `.env`
-
-Windows users can translate `./path` to `.\path` directly.
-
-## Before / After
-
-Without Nomos:
-
-- the agent has direct file, shell, network, or credential access
-- prompt guardrails are advisory
-- denials are inconsistent or absent
-- audit is partial or bolted on afterward
+If your agent can still call arbitrary APIs or leak customer data, your safety boundary is **at risk**. **Prompt injection**, tool misuse, and over-broad credentials turn into real side effects fast. Nomos applies **zero-trust controls** at the moment an agent tries to do something real. It does not control the model's reasoning. It controls what the agent is actually allowed to do.
 
 With Nomos:
 
-- risky actions pass through a single deterministic execution boundary
-- policy decides `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`
-- outputs are redacted before they leave the system
-- every action can emit replayable audit events
+- routed actions hit **one control point** before they happen
+- the same normalized action gets the same decision under the same identity, environment, and policy bundle
+- sensitive actions can be routed to **manual approval**
+- agents do not need to hold **long-lived enterprise credentials** on the Nomos-governed path
+- outputs can be **redacted** and governed actions produce **audit evidence**
+- the same control model works across **MCP** and **HTTP** integrations
+- behavior stays flexible because you shape it with your own **policies** and **configs**
 
-## What You Get
+## Demo First
 
-- deterministic deny-wins policy decisions
-- bounded executor surfaces for `fs`, `patch`, `exec`, `http`, and secrets
-- approvals tied to action fingerprints
-- redaction before responses, logs, audit, and telemetry
-- MCP stdio mode for agent tools and HTTP mode for tool loops
+The fastest way to understand Nomos is to watch the **same agent** attempt the **same action** with and without Nomos in front of it.
 
-## What Nomos Is Not
+1. A coding agent tries to read `.env` or run `git push` and Nomos **denies** it.
+2. A customer-support agent tries to issue a refund and Nomos returns **`REQUIRE_APPROVAL`**.
+3. A normal read action succeeds through Nomos, proving it is **governance**, not blanket obstruction.
 
-Nomos is not:
+## Install
 
-- an agent framework
-- a prompt guardrail library
-- a sandbox runtime by itself
-- a secrets manager
+### Homebrew (macOS)
 
-Nomos is the **execution governance layer** that sits between agents and real systems.
-
-## Why Not Just Use OPA, Vault, or Sandboxes?
-
-Those tools solve pieces of the problem.
-
-| Tool | What it solves |
-| --- | --- |
-| OPA | policy evaluation |
-| Vault | secret storage |
-| sandboxes | process isolation |
-| MCP servers | tool exposure |
-
-Nomos composes these concerns into a **single deterministic execution boundary** for agent actions.
-The differentiator is policy + mediation + execution + redaction + audit in one boundary.
-
-## Who It Is For
-
-- teams running coding agents in CI
-- operators exposing agent tools in Kubernetes or controlled runtimes
-- developers who want a practical local mediation layer for Claude Code or similar tools
-- security teams that want explicit, narrow, evidence-backed guarantees instead of vague "AI safety" claims
-
-## See It Deny Something
-
-This is the product proof in one glance.
-
-```text
-Agent request
-  fs.read file://workspace/.env
-
-Nomos decision
-  DENY (policy: safe)
-
-Why
-  .env reads are denied by the safe starter policy
+```bash
+brew install safe-agentic-world/nomos/nomos
 ```
 
-```json
-{
-  "event_type": "action.completed",
-  "action_type": "fs.read",
-  "resource_normalized": "file://workspace/.env",
-  "decision": "DENY",
-  "matched_rule_ids": ["safe-deny-root-env"],
-  "policy_bundle_hash": "<sha256 bundle hash>",
-  "result_classification": "DENIED_POLICY",
-  "retryable": false
-}
+### Scoop (Windows)
+
+```powershell
+scoop bucket add nomos https://github.com/safe-agentic-world/scoop-nomos
+scoop install nomos
 ```
 
-_Placeholder: add terminal screenshot or short GIF of the deny flow here._
+### Build From Source (Go)
 
-## Quick Mental Model
+```bash
+go install github.com/safe-agentic-world/nomos/cmd/nomos@latest
+```
+
+### Shell Installer (macOS And Linux)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/safe-agentic-world/nomos/main/install.sh | sh
+```
+
+## Architecture In One Picture
 
 ```mermaid
 flowchart LR
-  A[Agent or MCP Client] --> B[HTTP or MCP Ingress]
+  A[Agent or MCP Client] --> B[HTTP or MCP Boundary]
   subgraph N[Nomos Execution Boundary]
-    B --> C[Authenticate Identity]
-    C --> D[Validate and Normalize]
-    D --> E[Policy Engine]
-    E --> H[Executor Layer]
-    H --> I[Redaction and Output Caps]
-    I --> G[Response]
-    E -.-> J[Audit and Telemetry]
+    B --> C[Verify Identity]
+    C --> D[Validate and Normalize Action]
+    D --> E[Evaluate Policy]
+    E --> F{Decision}
+    F -->|ALLOW| G[Execute]
+    F -->|REQUIRE_APPROVAL| H[Create Approval]
+    F -->|DENY| I[Return Denial]
+    G --> J[Redact and Cap Output]
+    H --> I
+    J --> K[Return Response]
+    E -.-> L[Audit and Telemetry]
+    G -.-> L
+    H -.-> L
+    I -.-> L
   end
 ```
 
-Nomos is most useful when:
+The flow is simple:
 
-- the agent is untrusted
-- the side effects matter
-- you want a repeatable, reviewable control point
+1. an agent tries to do something real
+2. Nomos verifies who is asking and normalizes the action
+3. policy returns `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`
+4. only allowed actions execute on the mediated path
+5. outputs are redacted before they come back
+6. audit evidence is recorded for the whole path
 
-## Deployment Guarantees
+That same model works whether the agent reaches Nomos through MCP or HTTP.
 
-Nomos makes different claims depending on the environment. These guarantee levels are derived from runtime conditions, not marketing labels.
+## Serve
+
+### MCP
+
+Use Nomos as an **MCP server** when your agent client already knows how to use MCP tools.
+
+Good fit for:
+
+- Claude Code
+- Codex-style tool clients
+- OpenClaw-style MCP-connected agents
+
+Nomos exposes governed tools such as:
+
+- `nomos.fs_read`
+- `nomos.fs_write`
+- `nomos.apply_patch`
+- `nomos.exec`
+- `nomos.http_request`
+
+See:
+
+- [docs/integration-kit.md](./docs/integration-kit.md)
+- [docs/mcp-compatibility.md](./docs/mcp-compatibility.md)
+- [examples/local-tooling/claude-code-mcp.json](./examples/local-tooling/claude-code-mcp.json)
+- [examples/local-tooling/codex.mcp.json](./examples/local-tooling/codex.mcp.json)
+
+### HTTP
+
+Use Nomos as an **HTTP gateway** when your agent runtime already has its own tool loop or backend service.
+
+Good fit for:
+
+- app-integrated agents
+- custom tool runtimes
+- CI or service-side control planes
+
+Nomos exposes:
+
+- `POST /action`
+- `POST /run`
+
+with bearer principal auth and agent HMAC signing.
+
+See:
+
+- [docs/deployment.md](./docs/deployment.md)
+- [docs/quickstart.md](./docs/quickstart.md)
+
+## Key Features
+
+- `nomos doctor`: deterministic preflight checks before agents connect
+- `nomos policy test`: test a specific action against a policy bundle without executing it
+- `nomos policy explain`: understand why an action was allowed, denied, or approval-gated
+- **MCP** server mode: expose governed tools to MCP-compatible agent clients
+- **HTTP** gateway mode: mediate actions from custom tool loops and app backends
+- approval workflow: route sensitive actions into narrow, fingerprint-bound approvals
+- audit trail: record governed actions with stable policy and identity context
+- redaction: strip sensitive output before it reaches the agent, logs, or audit sinks
+- capability contract: surface what is immediately allowed, approval-gated, or unavailable
+- multi-bundle policy loading: compose layered policy packs with deterministic merge behavior
+
+
+## What Nomos Governs
+
+Nomos can govern actions such as:
+
+- `fs.read`
+- `fs.write`
+- `repo.apply_patch`
+- `process.exec`
+- `net.http_request`
+- `secrets.checkout`
+
+Policy returns:
+
+- `ALLOW`
+- `DENY`
+- `REQUIRE_APPROVAL`
+
+Around those actions, Nomos adds:
+
+- deterministic **deny-wins** policy evaluation
+- approval binding to action fingerprints
+- output caps and **redaction**
+- **audit events** and telemetry hooks
+- **least-privilege** identity and credential mediation
+
+See:
+
+- [docs/policy-language.md](./docs/policy-language.md)
+- [docs/obligations.md](./docs/obligations.md)
+- [docs/approvals.md](./docs/approvals.md)
+- [docs/audit-schema.md](./docs/audit-schema.md)
+
+## Guarantees And Deployment Modes
+
+Nomos makes different claims depending on where it is deployed. These are runtime-derived **assurance levels**, not marketing labels.
 
 | Deployment mode | Guarantee | Meaning |
 | --- | --- | --- |
-| `ci`, `k8s` with strong controls | `STRONG` | governed side effects can be enforced at the runtime boundary |
-| `ci`, `k8s` without full strong profile | `GUARDED` | Nomos strongly mediates the path it sees, but operator/runtime gaps may remain |
-| `remote_dev`, `unmanaged` | `BEST_EFFORT` | Nomos governs routed actions, but cannot guarantee full mediation |
+| controlled CI / k8s with strong controls | `STRONG` | governed side effects can be enforced at the runtime boundary |
+| partially hardened controlled runtime | `GUARDED` | Nomos strongly mediates the path it sees, but operator/runtime gaps may remain |
+| local unmanaged or remote-dev style usage | `BEST_EFFORT` | Nomos governs routed actions, but cannot guarantee full mediation |
+
+This matters because a local demo proves Nomos can govern the **path it sees**, while a hardened deployment proves much stronger control over what the agent can actually do.
 
 See:
 
@@ -212,142 +222,57 @@ See:
 - [docs/strong-guarantee-deployment.md](./docs/strong-guarantee-deployment.md)
 - [docs/reference-architecture.md](./docs/reference-architecture.md)
 
-## Install
+## Starter Bundles And Examples
 
-### Homebrew
+These are starter examples, not built-in enterprise policy packs.
 
-```bash
-brew install safe-agentic-world/nomos/nomos
-```
+Configs:
 
-### Scoop
+- [examples/quickstart/config.quickstart.json](./examples/quickstart/config.quickstart.json)
+- [examples/configs/config.example.json](./examples/configs/config.example.json)
+- [examples/configs/config.layered.example.json](./examples/configs/config.layered.example.json)
 
-```powershell
-scoop bucket add nomos https://github.com/safe-agentic-world/scoop-nomos
-scoop install nomos
-```
+Starter bundles:
 
-### Go
-
-```bash
-go install github.com/safe-agentic-world/nomos/cmd/nomos@latest
-```
-
-### macOS and Linux Installer
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/safe-agentic-world/nomos/main/install.sh | sh
-```
-
-## Core Concepts
-
-| Concept | Meaning | Examples |
-| --- | --- | --- |
-| Action | Every request becomes a typed action | `fs.read`, `fs.write`, `repo.apply_patch`, `process.exec`, `net.http_request`, `secrets.checkout` |
-| Resource | Every action targets a normalized resource URI | `file://workspace/README.md`, `url://api.example.com/v1/foo`, `secret://vault/github_token` |
-| Policy | Policy is deterministic, side-effect free, and deny-wins | `ALLOW`, `DENY`, `REQUIRE_APPROVAL` |
-| Obligations | Matched rules can attach runtime constraints | sandbox mode, network allowlist, exec allowlist, redirect policy, output caps, approval scope |
-
-See:
-
-- [docs/policy-language.md](./docs/policy-language.md)
-- [docs/obligations.md](./docs/obligations.md)
-- [docs/policy-explain.md](./docs/policy-explain.md)
-
-## Common Ways To Use It
-
-### 1. Protect Claude Code / Codex With MCP
-
-Start MCP mode:
-
-```bash
-nomos mcp -c ./examples/quickstart/config.quickstart.json
-```
-
-Then register `nomos` as an MCP server in your agent client.
-
-Nomos keeps stdout protocol-pure in MCP mode. Human-readable logs and the ready banner go to stderr.
-
-See:
-
-- [docs/integration-kit.md](./docs/integration-kit.md)
-- [examples/local-tooling/codex.mcp.json](./examples/local-tooling/codex.mcp.json)
-- [examples/local-tooling/claude-code-mcp.json](./examples/local-tooling/claude-code-mcp.json)
-
-### 2. Run Nomos As An HTTP Policy Gateway
-
-Start HTTP mode:
-
-```bash
-nomos serve -c ./examples/quickstart/config.quickstart.json
-```
-
-Use:
-
-- `POST /action`
-- `POST /run`
-
-with bearer principal auth plus agent HMAC signing.
-
-See:
-
-- [docs/deployment.md](./docs/deployment.md)
-- [docs/quickstart.md](./docs/quickstart.md)
-
-## Where Nomos Fits
-
-Nomos is adjacent to several categories, but it is not the same thing as any one of them.
-
-| Category | Primary job | What Nomos adds |
-| --- | --- | --- |
-| Agent framework | planning, tool orchestration, model loop | governed execution boundary |
-| Guardrail library | prompt or response constraints | real side-effect mediation |
-| Sandbox | process or host isolation | policy, approvals, redaction, and audit around actions |
-| Secret manager | store and issue secrets | executor-bound credential use and audit context |
-
-### 3. Enforce Agent Safety In CI
-
-Use Nomos in CI to validate what the agent is allowed to do before a publish or merge boundary.
-
-See:
-
-- [deploy/ci/github-actions-quickstart.yml](./deploy/ci/github-actions-quickstart.yml)
-- [deploy/ci/github-actions-hardened.yml](./deploy/ci/github-actions-hardened.yml)
-- [deploy/ci/generic-ci.sh](./deploy/ci/generic-ci.sh)
-
-## Starter Policy Bundles
-
-These are starter examples, not built-in policy dependencies.
-
-| Bundle | Formats | Purpose |
-| --- | --- | --- |
-| `safe` | [YAML](./examples/policies/safe.yaml), [JSON](./examples/policies/safe.json) | Secure local starter policy |
-| `all-fields.example` | [YAML](./examples/policies/all-fields.example.yaml), [JSON](./examples/policies/all-fields.example.json) | Full schema and obligations reference |
+- [examples/policies/safe.yaml](./examples/policies/safe.yaml)
+- [examples/policies/safe.json](./examples/policies/safe.json)
+- [examples/policies/purchase.yaml](./examples/policies/purchase.yaml)
+- [examples/policies/all-fields.example.yaml](./examples/policies/all-fields.example.yaml)
 
 ## Security Model
 
-Important design rules:
+Nomos is built around a few **hard rules**:
 
 - no trust in agent-supplied principal or environment claims
-- no raw enterprise credentials returned to agents
-- credentials are brokered as short-lived lease IDs
+- no raw enterprise credentials returned directly to agents
+- credentials are brokered as **short-lived lease IDs**
 - redaction happens before output leaves Nomos
-- policy/config errors fail closed
+- policy and config errors **fail closed**
 - local unmanaged mediation is explicitly weaker than controlled-runtime mediation
-
-Security Review Mapping:
-Nomos also includes an explicit control mapping to the [OWASP Agentic Top 10](./docs/owasp-agentic-mapping.md) for security review and buyer evaluation.
 
 See:
 
 - [docs/threat-model.md](./docs/threat-model.md)
 - [docs/redaction-guarantees.md](./docs/redaction-guarantees.md)
 - [docs/egress-and-identity.md](./docs/egress-and-identity.md)
-- [docs/approvals.md](./docs/approvals.md)
+- [docs/owasp-agentic-mapping.md](./docs/owasp-agentic-mapping.md)
+
+## Why Not Just Use OPA, Vault, Or Sandboxes?
+
+Those tools solve pieces of the problem.
+
+| Tool | What it primarily solves |
+| --- | --- |
+| OPA | policy evaluation |
+| Vault | secret storage |
+| sandbox runtimes | process isolation |
+| MCP servers | tool exposure |
+
+Nomos puts **policy**, **approvals**, **redaction**, and **audit** around the moment an agent tries to do something real on the mediated path.
 
 ## Testing
 
-Quick local validation:
+Quick validation:
 
 ```bash
 go test ./...
@@ -356,33 +281,53 @@ nomos policy test --action ./examples/quickstart/actions/allow-readme.json --bun
 nomos policy test --action ./examples/quickstart/actions/deny-env.json --bundle ./examples/policies/safe.yaml
 ```
 
-For the full operator runbook:
+See:
 
-- [docs/local-test-plan.md](./docs/local-test-plan.md)
 - [TESTING.md](./TESTING.md)
+- [docs/local-test-plan.md](./docs/local-test-plan.md)
 
-## Current Status
+## Few More Use Cases
 
-Nomos is pre-`v1.0.0`.
+### Coding Agents
 
-The core gateway, policy engine, audit path, and starter bundles are implemented today.
+- allow `git status`
+- deny `git push`
+- deny `.env` reads
+- allow bounded patch application
 
-The repository is already opinionated about:
+### Customer Operations Agents
 
-- deterministic semantics
-- fail-closed defaults
-- explicit guarantee boundaries
-- controlled-runtime hardening
+- allow order lookup
+- require approval for refunds or credits
+- deny bulk customer export
 
-It is intentionally conservative about claims in unmanaged local environments.
+### CI Agents
 
-## Documentation Map
+- allow test execution
+- deny release publishing outside policy
+- require approval for production-impacting actions
+
+See:
+
+- [docs/use-cases.md](./docs/use-cases.md)
+- [deploy/ci/github-actions-quickstart.yml](./deploy/ci/github-actions-quickstart.yml)
+- [deploy/ci/github-actions-hardened.yml](./deploy/ci/github-actions-hardened.yml)
+
+
+## Docs Map
 
 Start here:
 
 - [docs/quickstart.md](./docs/quickstart.md)
 - [docs/integration-kit.md](./docs/integration-kit.md)
 - [docs/local-test-plan.md](./docs/local-test-plan.md)
+
+Policy and behavior:
+
+- [docs/policy-language.md](./docs/policy-language.md)
+- [docs/policy-explain.md](./docs/policy-explain.md)
+- [docs/obligations.md](./docs/obligations.md)
+- [docs/approvals.md](./docs/approvals.md)
 
 Architecture and guarantees:
 
@@ -391,21 +336,17 @@ Architecture and guarantees:
 - [docs/audit-schema.md](./docs/audit-schema.md)
 - [docs/observability.md](./docs/observability.md)
 
-Security and Standards:
+Security and standards:
 
-- [docs/opa-interop.md](./docs/opa-interop.md)
-- [docs/spiffe-spire.md](./docs/spiffe-spire.md)
+- [docs/threat-model.md](./docs/threat-model.md)
 - [docs/mcp-compatibility.md](./docs/mcp-compatibility.md)
 - [docs/supply-chain-security.md](./docs/supply-chain-security.md)
 - [docs/release-verification.md](./docs/release-verification.md)
 - [docs/owasp-agentic-mapping.md](./docs/owasp-agentic-mapping.md)
 
-## Community And Contribution
+## Project Status
 
-- If Nomos is solving a problem you care about, a [star](https://github.com/safe-agentic-world/nomos) goes a long way and helps more people find it.
-- Open an issue for gaps, deployment questions, or integration requests.
-- Looking for a place to start? Browse [`good first issue`](https://github.com/safe-agentic-world/nomos/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22).
-- If you want to help shape Nomos, read [CONTRIBUTING.md](./CONTRIBUTING.md) and jump in with code, docs, feedback, or issues.
+Nomos is still **pre-v1.0.0**. The core model is usable today, but interfaces, policy surface, and integrations may still evolve before a stable `v1`.
 
 Project governance:
 
@@ -413,3 +354,10 @@ Project governance:
 - [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
 - [CHANGELOG.md](./CHANGELOG.md)
 - [LICENSE](./LICENSE)
+
+## Community And Contribution
+
+- open an issue for bugs, gaps, integration requests, or deployment questions.
+- Please do not open public issues for potential vulnerabilities, and report privately to maintainers. 
+- browse [`good first issue`](https://github.com/safe-agentic-world/nomos/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) if you want a place to start
+- read [CONTRIBUTING.md](./CONTRIBUTING.md) if you want to help shape the project

@@ -2,6 +2,8 @@
 
 This is the canonical deployment guide for Nomos.
 
+This guide covers deployment shapes and operational readiness. It does not, by itself, imply `STRONG` assurance. Stronger claims depend on the runtime evidence and outer-boundary controls described in the assurance and strong-guarantee docs.
+
 For higher-assurance deployment guidance, also see:
 
 - `docs/strong-guarantee-deployment.md`
@@ -11,6 +13,8 @@ For higher-assurance deployment guidance, also see:
 ## Stateless Mode
 
 Set `runtime.stateless_mode: true` for stateless deployments.
+
+Stateless mode is an operational mode, not a guarantee level.
 
 Behavior in stateless mode:
 - approvals are disabled (no local sqlite approval state)

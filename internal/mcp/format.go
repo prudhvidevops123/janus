@@ -110,7 +110,22 @@ func formatDecisionSummary(actionLabel string, resp action.Response) string {
 }
 
 func actionDetails(resp action.Response) string {
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 6)
+	if strings.EqualFold(strings.TrimSpace(resp.Decision), "REQUIRE_APPROVAL") {
+		meta := make([]string, 0, 3)
+		if resp.ApprovalID != "" {
+			meta = append(meta, "approval_id: "+resp.ApprovalID)
+		}
+		if resp.ApprovalFingerprint != "" {
+			meta = append(meta, "approval_fingerprint: "+resp.ApprovalFingerprint)
+		}
+		if resp.ApprovalExpiresAt != "" {
+			meta = append(meta, "approval_expires_at: "+resp.ApprovalExpiresAt)
+		}
+		if len(meta) > 0 {
+			parts = append(parts, strings.Join(meta, "\n"))
+		}
+	}
 	if output := strings.TrimSpace(resp.Output); output != "" {
 		parts = append(parts, output)
 	}
