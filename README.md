@@ -357,6 +357,7 @@ Project governance:
 
 ## Community And Contribution
 
-- open an issue for bugs, gaps, integration requests, or deployment questions
+- open an issue for bugs, gaps, integration requests, or deployment questions.
+- Please do not open public issues for potential vulnerabilities, and report privately to maintainers. 
 - browse [`good first issue`](https://github.com/safe-agentic-world/nomos/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) if you want a place to start
 - read [CONTRIBUTING.md](./CONTRIBUTING.md) if you want to help shape the project
