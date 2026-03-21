@@ -123,80 +123,6 @@ See:
 - [docs/deployment.md](./docs/deployment.md)
 - [docs/quickstart.md](./docs/quickstart.md)
 
-## What Nomos Governs
-
-Nomos can govern actions such as:
-
-- `fs.read`
-- `fs.write`
-- `repo.apply_patch`
-- `process.exec`
-- `net.http_request`
-- `secrets.checkout`
-
-Policy returns:
-
-- `ALLOW`
-- `DENY`
-- `REQUIRE_APPROVAL`
-
-Around those actions, Nomos adds:
-
-- deterministic **deny-wins** policy evaluation
-- approval binding to action fingerprints
-- output caps and **redaction**
-- **audit events** and telemetry hooks
-- **least-privilege** identity and credential mediation
-
-See:
-
-- [docs/policy-language.md](./docs/policy-language.md)
-- [docs/obligations.md](./docs/obligations.md)
-- [docs/approvals.md](./docs/approvals.md)
-- [docs/audit-schema.md](./docs/audit-schema.md)
-
-
-## Key Features
-
-- `nomos doctor`: deterministic preflight checks before agents connect
-- `nomos policy test`: test a specific action against a policy bundle without executing it
-- `nomos policy explain`: understand why an action was allowed, denied, or approval-gated
-- **MCP** server mode: expose governed tools to MCP-compatible agent clients
-- **HTTP** gateway mode: mediate actions from custom tool loops and app backends
-- approval workflow: route sensitive actions into narrow, fingerprint-bound approvals
-- audit trail: record governed actions with stable policy and identity context
-- redaction: strip sensitive output before it reaches the agent, logs, or audit sinks
-- capability contract: surface what is immediately allowed, approval-gated, or unavailable
-- multi-bundle policy loading: compose layered policy packs with deterministic merge behavior
-
-
-## Few More Use Cases
-
-### Coding Agents
-
-- allow `git status`
-- deny `git push`
-- deny `.env` reads
-- allow bounded patch application
-
-### Customer Operations Agents
-
-- allow order lookup
-- require approval for refunds or credits
-- deny bulk customer export
-
-### CI Agents
-
-- allow test execution
-- deny release publishing outside policy
-- require approval for production-impacting actions
-
-See:
-
-- [docs/use-cases.md](./docs/use-cases.md)
-- [deploy/ci/github-actions-quickstart.yml](./deploy/ci/github-actions-quickstart.yml)
-- [deploy/ci/github-actions-hardened.yml](./deploy/ci/github-actions-hardened.yml)
-
 ## Architecture In One Picture
 
 ```mermaid
@@ -230,6 +156,80 @@ The flow is simple:
 6. audit evidence is recorded for the whole path
 
 That same model works whether the agent reaches Nomos through MCP or HTTP.
+
+## Key Features
+
+- `nomos doctor`: deterministic preflight checks before agents connect
+- `nomos policy test`: test a specific action against a policy bundle without executing it
+- `nomos policy explain`: understand why an action was allowed, denied, or approval-gated
+- **MCP** server mode: expose governed tools to MCP-compatible agent clients
+- **HTTP** gateway mode: mediate actions from custom tool loops and app backends
+- approval workflow: route sensitive actions into narrow, fingerprint-bound approvals
+- audit trail: record governed actions with stable policy and identity context
+- redaction: strip sensitive output before it reaches the agent, logs, or audit sinks
+- capability contract: surface what is immediately allowed, approval-gated, or unavailable
+- multi-bundle policy loading: compose layered policy packs with deterministic merge behavior
+
+
+## What Nomos Governs
+
+Nomos can govern actions such as:
+
+- `fs.read`
+- `fs.write`
+- `repo.apply_patch`
+- `process.exec`
+- `net.http_request`
+- `secrets.checkout`
+
+Policy returns:
+
+- `ALLOW`
+- `DENY`
+- `REQUIRE_APPROVAL`
+
+Around those actions, Nomos adds:
+
+- deterministic **deny-wins** policy evaluation
+- approval binding to action fingerprints
+- output caps and **redaction**
+- **audit events** and telemetry hooks
+- **least-privilege** identity and credential mediation
+
+See:
+
+- [docs/policy-language.md](./docs/policy-language.md)
+- [docs/obligations.md](./docs/obligations.md)
+- [docs/approvals.md](./docs/approvals.md)
+- [docs/audit-schema.md](./docs/audit-schema.md)
+
+## Few More Use Cases
+
+### Coding Agents
+
+- allow `git status`
+- deny `git push`
+- deny `.env` reads
+- allow bounded patch application
+
+### Customer Operations Agents
+
+- allow order lookup
+- require approval for refunds or credits
+- deny bulk customer export
+
+### CI Agents
+
+- allow test execution
+- deny release publishing outside policy
+- require approval for production-impacting actions
+
+See:
+
+- [docs/use-cases.md](./docs/use-cases.md)
+- [deploy/ci/github-actions-quickstart.yml](./deploy/ci/github-actions-quickstart.yml)
+- [deploy/ci/github-actions-hardened.yml](./deploy/ci/github-actions-hardened.yml)
+
 
 ## Guarantees And Deployment Modes
 
