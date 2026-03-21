@@ -74,6 +74,40 @@ go install github.com/safe-agentic-world/nomos/cmd/nomos@latest
 curl -fsSL https://raw.githubusercontent.com/safe-agentic-world/nomos/main/install.sh | sh
 ```
 
+## Architecture In One Picture
+
+```mermaid
+flowchart LR
+  A[Agent or MCP Client] --> B[HTTP or MCP Boundary]
+  subgraph N[Nomos Execution Boundary]
+    B --> C[Verify Identity]
+    C --> D[Validate and Normalize Action]
+    D --> E[Evaluate Policy]
+    E --> F{Decision}
+    F -->|ALLOW| G[Execute]
+    F -->|REQUIRE_APPROVAL| H[Create Approval]
+    F -->|DENY| I[Return Denial]
+    G --> J[Redact and Cap Output]
+    H --> I
+    J --> K[Return Response]
+    E -.-> L[Audit and Telemetry]
+    G -.-> L
+    H -.-> L
+    I -.-> L
+  end
+```
+
+The flow is simple:
+
+1. an agent tries to do something real
+2. Nomos verifies who is asking and normalizes the action
+3. policy returns `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`
+4. only allowed actions execute on the mediated path
+5. outputs are redacted before they come back
+6. audit evidence is recorded for the whole path
+
+That same model works whether the agent reaches Nomos through MCP or HTTP.
+
 ## Serve
 
 ### MCP
@@ -122,40 +156,6 @@ See:
 
 - [docs/deployment.md](./docs/deployment.md)
 - [docs/quickstart.md](./docs/quickstart.md)
-
-## Architecture In One Picture
-
-```mermaid
-flowchart LR
-  A[Agent or MCP Client] --> B[HTTP or MCP Boundary]
-  subgraph N[Nomos Execution Boundary]
-    B --> C[Verify Identity]
-    C --> D[Validate and Normalize Action]
-    D --> E[Evaluate Policy]
-    E --> F{Decision}
-    F -->|ALLOW| G[Execute]
-    F -->|REQUIRE_APPROVAL| H[Create Approval]
-    F -->|DENY| I[Return Denial]
-    G --> J[Redact and Cap Output]
-    H --> I
-    J --> K[Return Response]
-    E -.-> L[Audit and Telemetry]
-    G -.-> L
-    H -.-> L
-    I -.-> L
-  end
-```
-
-The flow is simple:
-
-1. an agent tries to do something real
-2. Nomos verifies who is asking and normalizes the action
-3. policy returns `ALLOW`, `DENY`, or `REQUIRE_APPROVAL`
-4. only allowed actions execute on the mediated path
-5. outputs are redacted before they come back
-6. audit evidence is recorded for the whole path
-
-That same model works whether the agent reaches Nomos through MCP or HTTP.
 
 ## Key Features
 
