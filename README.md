@@ -344,12 +344,6 @@ Security and standards:
 - [docs/release-verification.md](./docs/release-verification.md)
 - [docs/owasp-agentic-mapping.md](./docs/owasp-agentic-mapping.md)
 
-## Community And Contribution
-
-- open an issue for bugs, gaps, integration requests, or deployment questions
-- browse [`good first issue`](https://github.com/safe-agentic-world/nomos/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) if you want a place to start
-- read [CONTRIBUTING.md](./CONTRIBUTING.md) if you want to help shape the project
-
 ## Project Status
 
 Nomos is still **pre-v1.0.0**. The core model is usable today, but interfaces, policy surface, and integrations may still evolve before a stable `v1`.
@@ -360,3 +354,9 @@ Project governance:
 - [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md)
 - [CHANGELOG.md](./CHANGELOG.md)
 - [LICENSE](./LICENSE)
+
+## Community And Contribution
+
+- open an issue for bugs, gaps, integration requests, or deployment questions
+- browse [`good first issue`](https://github.com/safe-agentic-world/nomos/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) if you want a place to start
+- read [CONTRIBUTING.md](./CONTRIBUTING.md) if you want to help shape the project
