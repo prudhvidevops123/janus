@@ -9,13 +9,13 @@
 
 **Nomos is an execution firewall for AI agents.**
 
-It sits between agents and real actions such as reading files, changing code, running commands, calling APIs, and using credentials. Instead of trusting prompts or hoping the agent behaves, Nomos makes one explicit decision at the execution boundary:
+It sits between agents and **real actions** such as reading files, changing code, running commands, calling APIs, and using credentials. Instead of trusting prompts or hoping the agent behaves, Nomos makes one explicit decision at the **execution boundary**:
 
 - `ALLOW`
 - `DENY`
 - `REQUIRE_APPROVAL`
 
-Nomos is agent-agnostic and model-agnostic. You can put it in front of different agent frameworks, different model providers, and different tool runtimes, then shape its behavior with your own policies and configs.
+Nomos is **agent-agnostic** and **model-agnostic**. You can put it in front of different agent frameworks, different model providers, and different tool runtimes, then shape its behavior with your own **policies** and **configs**.
 
 
 ## Why Nomos Exists
@@ -27,27 +27,27 @@ Agents can be useful, but they are still one bad tool call away from:
 - changing or deleting files you did not ask it to touch
 - using powerful credentials in ways you never intended
 
-If your agent can still call arbitrary APIs or leak customer data, your safety boundary is at risk. Prompt injection, tool misuse, and over-broad credentials turn into real side effects fast. Nomos applies zero-trust controls at the moment an agent tries to do something real. It does not control the model's reasoning. It controls what the agent is actually allowed to do.
+If your agent can still call arbitrary APIs or leak customer data, your **safety boundary** is at risk. **Prompt injection**, tool misuse, and over-broad credentials turn into real side effects fast. Nomos applies **zero-trust controls** at the moment an agent tries to do something real. It does not control the model's reasoning. It controls what the agent is actually **allowed to do**.
 
 With Nomos:
 
-- routed actions hit one control point before they happen
+- routed actions hit **one control point** before they happen
 - the same normalized action gets the same decision under the same identity, environment, and policy bundle
-- sensitive actions can be routed to manual approval
-- agents do not need to hold long-lived enterprise credentials on the Nomos-governed path
-- outputs can be redacted and governed actions produce audit evidence
-- the same control model works across MCP and HTTP integrations
-- behavior stays flexible because you shape it with your own policies and configs
+- sensitive actions can be routed to **manual approval**
+- agents do not need to hold **long-lived enterprise credentials** on the Nomos-governed path
+- outputs can be **redacted** and governed actions produce **audit evidence**
+- the same control model works across **MCP** and **HTTP** integrations
+- behavior stays flexible because you shape it with your own **policies** and **configs**
 
 ## Demo First
 
-The fastest way to understand Nomos is to watch the same agent attempt the same action with and without Nomos in front of it.
+The fastest way to understand Nomos is to watch the **same agent** attempt the **same action** with and without Nomos in front of it.
 
 Good launch demos:
 
-1. A coding agent tries to read `.env` or run `git push` and Nomos denies it.
-2. A customer-support agent tries to issue a refund and Nomos returns `REQUIRE_APPROVAL`.
-3. A normal read action succeeds through Nomos, proving it is governance, not blanket obstruction.
+1. A coding agent tries to read `.env` or run `git push` and Nomos **denies** it.
+2. A customer-support agent tries to issue a refund and Nomos returns **`REQUIRE_APPROVAL`**.
+3. A normal read action succeeds through Nomos, proving it is **governance**, not blanket obstruction.
 
 Placeholder: add a short hero GIF or video here showing one safe action, one approval-gated action, and one denied action.
 
@@ -60,8 +60,8 @@ Placeholder: add a screenshot here of an approval-gated action with approval met
 - `nomos doctor`: deterministic preflight checks before agents connect
 - `nomos policy test`: test a specific action against a policy bundle without executing it
 - `nomos policy explain`: understand why an action was allowed, denied, or approval-gated
-- MCP server mode: expose governed tools to MCP-compatible agent clients
-- HTTP gateway mode: mediate actions from custom tool loops and app backends
+- **MCP** server mode: expose governed tools to MCP-compatible agent clients
+- **HTTP** gateway mode: mediate actions from custom tool loops and app backends
 - approval workflow: route sensitive actions into narrow, fingerprint-bound approvals
 - audit trail: record governed actions with stable policy and identity context
 - redaction: strip sensitive output before it reaches the agent, logs, or audit sinks
@@ -97,7 +97,7 @@ curl -fsSL https://raw.githubusercontent.com/safe-agentic-world/nomos/main/insta
 
 ### MCP
 
-Use Nomos as an MCP server when your agent client already knows how to use MCP tools.
+Use Nomos as an **MCP server** when your agent client already knows how to use MCP tools.
 
 Good fit for:
 
@@ -122,7 +122,7 @@ See:
 
 ### HTTP
 
-Use Nomos as an HTTP gateway when your agent runtime already has its own tool loop or backend service.
+Use Nomos as an **HTTP gateway** when your agent runtime already has its own tool loop or backend service.
 
 Good fit for:
 
@@ -161,11 +161,11 @@ Policy returns:
 
 Around those actions, Nomos adds:
 
-- deterministic deny-wins policy evaluation
+- deterministic **deny-wins** policy evaluation
 - approval binding to action fingerprints
-- output caps and redaction
-- audit events and telemetry hooks
-- least-privilege identity and credential mediation
+- output caps and **redaction**
+- **audit events** and telemetry hooks
+- **least-privilege** identity and credential mediation
 
 See:
 
@@ -237,7 +237,7 @@ That same model works whether the agent reaches Nomos through MCP or HTTP.
 
 ## Guarantees And Deployment Modes
 
-Nomos makes different claims depending on where it is deployed. These are runtime-derived assurance levels, not marketing labels.
+Nomos makes different claims depending on where it is deployed. These are runtime-derived **assurance levels**, not marketing labels.
 
 | Deployment mode | Guarantee | Meaning |
 | --- | --- | --- |
@@ -245,7 +245,7 @@ Nomos makes different claims depending on where it is deployed. These are runtim
 | partially hardened controlled runtime | `GUARDED` | Nomos strongly mediates the path it sees, but operator/runtime gaps may remain |
 | local unmanaged or remote-dev style usage | `BEST_EFFORT` | Nomos governs routed actions, but cannot guarantee full mediation |
 
-This matters because a local demo proves Nomos can govern the path it sees, while a hardened deployment proves much stronger control over what the agent can actually do.
+This matters because a local demo proves Nomos can govern the **path it sees**, while a hardened deployment proves much stronger control over what the agent can actually do.
 
 See:
 
@@ -273,13 +273,13 @@ Starter bundles:
 
 ## Security Model
 
-Nomos is built around a few hard rules:
+Nomos is built around a few **hard rules**:
 
 - no trust in agent-supplied principal or environment claims
 - no raw enterprise credentials returned directly to agents
-- credentials are brokered as short-lived lease IDs
+- credentials are brokered as **short-lived lease IDs**
 - redaction happens before output leaves Nomos
-- policy and config errors fail closed
+- policy and config errors **fail closed**
 - local unmanaged mediation is explicitly weaker than controlled-runtime mediation
 
 See:
@@ -300,7 +300,7 @@ Those tools solve pieces of the problem.
 | sandbox runtimes | process isolation |
 | MCP servers | tool exposure |
 
-Nomos puts policy, approvals, redaction, and audit around the moment an agent tries to do something real on the mediated path.
+Nomos puts **policy**, **approvals**, **redaction**, and **audit** around the moment an agent tries to do something real on the mediated path.
 
 ## Testing
 
